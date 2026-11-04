@@ -34,6 +34,12 @@ claude
 
 After initialization, use `python3 .cc/cc` for local CLI operations and keep normal `/plan` and `/code-review`.
 
+Prefer namespaced `/cc:*` commands in Claude Code: they use the installed plugin
+engine, so existing workspaces receive command updates after a plugin update and
+reload. `/cc:upgrade` optionally refreshes terminal `.cc/cc` compatibility. Tickets,
+`workspace.json`, context, instructions and existing local Skills stay untouched
+by default. See the [upgrade guide](docs/UPGRADING.md).
+
 ## Push and release (from your Mac)
 
 See [docs/RELEASING.md](docs/RELEASING.md). An SSH or HTTPS Git credential on your Mac is required. Publishing has **not** been done by packaging the ZIP.
@@ -41,3 +47,10 @@ See [docs/RELEASING.md](docs/RELEASING.md). An SSH or HTTPS Git credential on yo
 ## View your tickets
 
 After updating or installing `cc@my-cc-marketplace`, run `/cc:dashboard` in Claude Code from your initialized workspace. It opens a local read-only dashboard; refresh to see saved changes. Ask the skill to stop the server when finished. See the [dashboard guide](README.md#open-your-dashboard) for terminal commands and existing-workspace compatibility.
+
+For planning that resumes days later: `/cc:pickup TICKET` → native `/plan` in the
+same session → finalize and leave without native execution approval → explicitly
+accept the revision for future work → `/cc:save TICKET`. Later use `/cc:resume`
+and `/cc:work`; authorize launch separately, then approve editing in the repository
+session. See the [planning workflow guide](docs/PLANNING-WORKFLOW.md) for exact
+plan import, controls, and existing-workspace compatibility.

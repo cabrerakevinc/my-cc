@@ -6,6 +6,7 @@ No vendor API calls are made by this program. External CLIs are detected only.
 from __future__ import annotations
 
 import html
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import secrets
 import threading
@@ -35,6 +36,42 @@ PHASES = (
 PROFILES = ("engineering", "business", "academic", "general")
 TICKET_RE = re.compile(r"^[A-Z][A-Z0-9]{1,15}-[1-9][0-9]{0,9}$")
 NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$")
+
+# Exact generated snapshots from repository history (v0.1.0-v0.1.2).
+# Unknown or customized files are never treated as generated merely by name.
+LEGACY_MANAGED_HASHES = {
+    ".cc/cc": [
+        "01757a4ae395725e92ccfc28fc0e112916caeceb2842e1e9c891892303ab72a6",
+        "02368339124a796651af17fe189263fbe08f6e5f2a93e7898e314371d097f6c1",
+        "562a12b77c070adcd50ab541b91026369f7392c814021cc62cd6ae379bd56053",
+        "d91e277a51f19febe8c9cc69034a63bfadba0db653b219aa47b1b988f3e51bd1"
+    ],
+    ".claude/skills/cc-dashboard/SKILL.md": [
+        "aa8c1d993c01fc0e522c2e4d3cc59786a571a58f802309a20b445b21dc83d214"
+    ],
+    ".claude/skills/cc-draft/SKILL.md": [
+        "e17519424e0220b87a6aa3233aa1c273aca03581a104281fabd6459a9c820c96"
+    ],
+    ".claude/skills/cc-pickup/SKILL.md": [
+        "1908f0f4fa85846e19b9738f8fd3421b6083def1c4690f13719cfd7e66571163",
+        "a4d32b6ca4922c843aa63ce349b2e5f06d4b81f1d462192c58c7deaa66d67a5a"
+    ],
+    ".claude/skills/cc-resume/SKILL.md": [
+        "94cf4679befd389731257ff939e6f74cc97f2b852fccc2e45ac8dc136c6ddfde",
+        "ee9a5bd092f10187674ed26d81ad1d0ddaec5b64737fe1af6a06b0d1a505ff43"
+    ],
+    ".claude/skills/cc-save/SKILL.md": [
+        "65cc330ccea9d50c034414672b42a4f5b0019f1cfa66a0030f5224fcd5398e48",
+        "81d7e775071cdd122e5a3a8e3bd9a7bb7260921024f4b67b5dbd359d18f11573"
+    ],
+    ".claude/skills/cc-status/SKILL.md": [
+        "7eb0a199fc673eeb13f27785c1e0fa6dcfe652f30fe0eff032da56d5723df399"
+    ],
+    ".claude/skills/cc-work/SKILL.md": [
+        "8d3f3f0fbe7b6045d47f71a922f3d1c304ab62e42e46c76e8919e77886336ffd",
+        "db737268b68dafac9e2d7cf7dbbc0138ff339abd92e18f102e640a81533b813f"
+    ]
+}
 
 
 def now():
@@ -120,7 +157,62 @@ def ticket_load(root: Path, value: str):
     path = ticket_dir(root, value) / "ticket.json"
     if not path.exists():
         fail(f"Unknown ticket {value}. Use `cc pickup {value} --title ...` first.")
-    return json_read(path)
+    ticket = json_read(path)
+    validate_plan_state(root, ticket)
+    return ticket
+
+
+def plan_digest(root: Path, ticket):
+    path = ticket_dir(root, ticket["id"]) / "plan.md"
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def validate_plan_state(root: Path, ticket):
+    """Compute effective approvals without writing during read-only commands.
+
+    Legacy booleans cannot prove which revision was approved. Keep documents and
+    on-disk metadata intact until an explicit mutation, but require reapproval.
+    """
+    digest = plan_digest(root, ticket)
+    was_approved = ticket.get("approved_plan") or ticket.get("implementation_approved")
+    ticket["approved_plan"] = bool(digest and ticket.get("approved_plan")
+                                   and ticket.get("approved_plan_sha256") == digest)
+    ticket["implementation_approved"] = bool(ticket["approved_plan"]
+        and ticket.get("implementation_approved")
+        and ticket.get("implementation_plan_sha256") == digest)
+    if was_approved and not ticket["approved_plan"]:
+        ticket["phase"] = "planning"
+        ticket["next_action"] = "Review current plan and record content-bound approval"
+        for key in ("approved_plan_sha256", "approved_plan_at"):
+            ticket.pop(key, None)
+    if not ticket["implementation_approved"]:
+        for key in ("implementation_plan_sha256", "implementation_approved_at"):
+            ticket.pop(key, None)
+    ticket["plan_sha256"] = digest
+
+
+def import_plan(root: Path, ticket, filename):
+    source = Path(filename).expanduser().resolve()
+    data = source.read_bytes()
+    text = data.decode("utf-8")
+    if not text.strip() or "No approved plan yet." in text:
+        fail("Plan is empty or a placeholder; provide the complete finalized plan.")
+    digest = hashlib.sha256(data).hexdigest()
+    changed = digest != plan_digest(root, ticket)
+    atomic_write(ticket_dir(root, ticket["id"]) / "plan.md", text)
+    if plan_digest(root, ticket) != digest:
+        fail("Plan verification failed; approval was not recorded.")
+    ticket["plan_source"] = str(source)
+    ticket["plan_sha256"] = digest
+    if changed:
+        ticket["approved_plan"] = False
+        ticket["implementation_approved"] = False
+        for key in ("approved_plan_sha256", "implementation_plan_sha256",
+                    "approved_plan_at", "implementation_approved_at"):
+            ticket.pop(key, None)
+        ticket["phase"] = "planning"
+        ticket["next_action"] = "Review and approve plan"
+    return changed
 
 
 def db_connect(root: Path):
@@ -164,6 +256,12 @@ def skill(name: str, description: str, steps: str, manual: bool = False):
 
 def workspace_skills():
     skills = {
+        "cc-upgrade": skill("cc-upgrade", "Refresh My CC compatibility files without changing ticket state", """
+            Run the updated plugin's /cc:upgrade to refresh this workspace's compatibility engine.
+            When using a standalone updated engine, run `cc upgrade --dry-run`, then `cc upgrade`.
+            Existing local Skills are untouched by default. Add --refresh-skills only if the user explicitly requests refreshing unchanged generated My CC Skills; customized and unrelated Skills are preserved.
+            Do not initialize again, modify workspace.json, ticket state, context or instructions, or install connectors.
+        """, manual=True),
         "cc-dashboard": skill("cc-dashboard", "Open the local read-only ticket dashboard", """
             Run `python3 .cc/cc dashboard --background` from the workspace.
             Report the returned URL. Stop with `python3 .cc/cc dashboard --stop`.
@@ -173,35 +271,38 @@ def workspace_skills():
             Ticket: $ARGUMENTS
             1. Check `cc show <TICKET>`; if missing, retrieve Jira details using the approved TWG CLI after inspecting available `twg --help` commands. Do not invent flags or use unapproved MCP connectors.
             2. Create the local ticket with `cc pickup <TICKET> --title '...'` and save an accurate `brief.md`. Never fabricate Jira facts.
-            3. Identify candidate repositories from the ticket, known repo registry, and targeted metadata searches. Avoid scanning all repositories.
-            4. Investigate only the necessary code, preserving existing repo instructions.
+            3. Identify candidate repositories from the ticket, known repo registry, and targeted metadata searches. Avoid scanning all repositories. Record repository paths, branches/HEADs, relevant files, and source references in `brief.md`.
+            4. Investigate only the necessary code, reading applicable repository instructions from outermost to innermost directories.
             5. Explain findings and proposed scope. Do not edit code, create PRs, or transition Jira at pickup.
+            6. Continue in the same session with native `/plan` for the minimal implementation and testing plan. Do not create a competing /cc:plan command. Keep findings in the conversation until a manual /cc:save.
         """),
         "cc-save": skill("cc-save", "Checkpoint ticket facts, decisions, and next action", """
             Ticket: $ARGUMENTS
-            1. Resolve the ticket with `cc show <TICKET>`.
-            2. Distill verified findings and decisions; preserve rejected alternatives and reasons with `cc decision`.
-            3. Keep `brief.md`, `plan.md`, and `decisions.md` factual, concise, and current. Do not copy whole transcripts or raw logs.
-            4. Run `cc checkpoint <TICKET> --summary '...' --next '...'` and verify it succeeds.
-            5. Report the exact phase, pause state, and next action. Never claim success unless the command succeeds.
+            1. Resolve the ticket with `cc show <TICKET>`. This is a manual checkpoint, never permission to implement.
+            2. If native planning occurred, locate the exact finalized Markdown plan using the path known in this conversation or supplied by the developer. Native plans default to `~/.claude/plans/`; `plansDirectory` can change that. Never select by newest timestamp, infer ticket ownership from a filename, or inspect private session JSONL/internal mappings. If the exact plan is unavailable or ambiguous, ask for its path or complete content and stop the plan checkpoint until supplied. Do not silently save a summary as the full plan. If content is supplied, write it in full to a ticket-scoped file before importing.
+            3. Import the complete plan with `cc plan <TICKET> --file '<EXACT-PATH>'`. This is a file importer, not a planner. Preserve every implementation/testing step, constraint, and alternative; keep only the handoff concise. For a progress save with no new planning, retain the existing plan; an investigation-only checkpoint may remain unapproved.
+            4. Preserve verified findings, repository references and observed branches/HEADs in `brief.md`; preserve technical decisions and rejected alternatives with `cc decision <TICKET> --text '...' --reason '...'`. Review existing entries first to avoid duplicates.
+            5. Record `cc approve <TICKET> --plan` only when the developer explicitly accepts this exact revision for future implementation. If approval is unclear, ask whether to save it as a draft or approve it for future work. Native execution approval, dismissing a dialog, and requesting a save do not imply this approval. Never run `approve --implementation` as part of saving. Identical imports retain existing approval; changed content resets both approvals.
+            6. Run `cc checkpoint <TICKET> --summary '...' --next '...'` (add `--pause` when stopping). Then run `cc show <TICKET>` and read the persisted `plan.md` to verify full content, hash, and effective approval status. Report the exact saved path, phase, approval status, pause state and next action. Never claim success before verification.
         """),
         "cc-resume": skill("cc-resume", "Restore the latest checkpoint for one ticket only", """
             Ticket: $ARGUMENTS
-            1. Execute `cc resume <TICKET>` and read only the listed ticket documents as needed.
-            2. If the ticket was paused for days, recheck relevant Jira requirements and Git branch/contract changes through approved tools.
-            3. Explain new information, decisions, risks, and next action. Do not silently change an approved plan.
-            4. If ready to implement, request explicit approval. Coding must occur in a repository-specific session via `cc work`.
+            1. Execute `cc resume <TICKET>` and read the complete saved plan, brief, decisions, and handoff for this ticket only. Resume is read-only; it neither approves implementation nor clears pause state. Content-bound approval is checked against the current plan; legacy unbound approval requires explicit reapproval.
+            2. Recheck relevant Jira requirements and repository branch/HEAD, PR and contract changes through approved tools before implementation, especially after days or weeks. Explain what changed; do not reconstruct the entire conversation.
+            3. Do not silently change an approved plan. If changes are needed, import the revised full plan and request fresh plan and implementation approvals.
+            4. For implementation, use /cc:work to prepare a separate repository session. Request explicit authorization before recording `cc approve <TICKET> --implementation`; saving or approving a plan alone never grants it. The worker starts in native Plan Mode and requests approval before editing.
         """),
         "cc-status": skill("cc-status", "Summarize sprint tickets without loading all ticket histories", """
             Run `cc status` with the filters requested in $ARGUMENTS. Use the SQLite status index, not the contents of every ticket folder. Summarize blockers, pending decisions, and the next actions. Keep Jira and local phase distinct.
         """),
         "cc-work": skill("cc-work", "Launch repo-specific Claude Code implementation worker", """
             Ticket / repository: $ARGUMENTS
-            1. Run `cc show <TICKET>` and verify the approved plan and implementation approval.
-            2. Discover/confirm the target repository. Register it first with `cc repo add` if necessary.
-            3. Explain that `cc work <TICKET> --repo <REPO>` starts a *separate* Claude Code coding session from that repo's isolated worktree.
-            4. Never implement code in the command-center checkout. Repository instructions, including AGENT.md and AGENTS.md, govern implementation details.
-            5. Do not perform merge, push, deploy, or Jira Done transitions without separate authorization.
+            1. Run `cc show <TICKET>` and read the complete saved plan, brief and decisions. Confirm content-bound plan approval and revalidate relevant Jira and repository changes. If the plan changed, import it and obtain fresh approval first.
+            2. Request explicit implementation/launch authorization before recording `cc approve <TICKET> --implementation`. Prior plan approval or a saved checkpoint does not grant this authorization. If launch authorization is already recorded for the unchanged plan, do not ask to record it again.
+            3. Discover/confirm the target repository. Register it first with `cc repo add` if necessary. Explain the precise `cc work <TICKET> --repo <REPO>` command for a separate terminal; do not run interactive Claude as a nested Bash process.
+            4. The launcher starts a separate Claude Code session in the repository's isolated worktree, with the complete saved work package and `--permission-mode plan`. The worker must read applicable repository instructions, revalidate scope, and request implementation approval before source edits. Use native approval there when ready to implement.
+            5. Never implement code in the command-center checkout. Repository instructions, including AGENT.md, AGENTS.md, CLAUDE.md and applicable MEMORY.md, retain authority. Check outermost-to-innermost instructions and repeat when entering subfolders.
+            6. Do not perform merge, push, deploy, or Jira Done transitions without separate authorization.
         """, manual=True),
         "cc-draft": skill("cc-draft", "Draft communication using workspace voice and task context", """
             Request: $ARGUMENTS
@@ -255,13 +356,14 @@ def create_workspace(args):
 
 You are a **coordinator**, not the repository coding session.
 
-- Workspace profile: `{args.profile}`. Use `python3 .cc/cc` for durable state (or global `cc` if installed).
+- Workspace profile: `{args.profile}`. Prefer namespaced `/cc:*` commands with the installed plugin; they use its bundled engine. `python3 .cc/cc` is a standalone compatibility snapshot; refresh it with `/cc:upgrade`. Existing local Skills are untouched by default.
 - One ticket = one independently checkpointed workspace. Never load all tickets into context.
 - Use TWG for Jira/Bitbucket/Rovo only after discovering approved commands; never invent CLI syntax.
 - Use the company's approved AWS CLI/MCP CLI only when configured; prefer read-only diagnostics.
 - Context7 is for third-party library documentation, not company source of truth.
 - Put work and decisions into `state/tickets/` with `python3 .cc/cc checkpoint` after meaningful milestones.
 - Always preserve ticket acceptance criteria, approved scope, and contradictory decisions.
+- Use native `/plan` in this session. Leave it without authorizing execution when saving for later. Manual `/cc-save` imports the complete plan; plan approval is separate from implementation authorization.
 - For coding, run `python3 .cc/cc work TICKET --repo NAME` in a **separate terminal**; this launches Claude **inside the repository worktree**. Do not spawn nested Claude Code processes from within this conversation.
 - Repository `CLAUDE.md`, `AGENTS.md`, and `AGENT.md` govern implementation. Report conflicts; never override them with workspace style preferences.
 - Never push, merge, deploy, send messages, or transition Jira issues without explicit authorization.
@@ -288,13 +390,97 @@ Supported starter commands: `pickup`, `status`, `resume`, `checkpoint`, `decisio
     (root / "context").chmod(0o700)
     for name, content in workspace_skills().items():
         atomic_write(root / ".claude" / "skills" / name / "SKILL.md", content)
-    # Keep a self-contained, versioned CLI in each workspace. The Claude plugin
-    # therefore works without requiring a global cc executable or PATH changes.
+    # Standalone compatibility snapshot. Namespaced plugin Skills use the bundled
+    # engine directly, so plugin updates do not depend on refreshing this copy.
     local_cli = root / ".cc" / "cc"
     local_cli.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(__file__).resolve(), local_cli)
     local_cli.chmod(0o700)
+    json_write(root / ".cc" / "managed-files.json", {
+        "format": 1, "hashes": {
+            name: hashlib.sha256(data).hexdigest()
+            for name, data in managed_workspace_files().items()
+        },
+    })
     out(f"Initialized {args.name} at {root}\nNext: cd {root} && python3 .cc/cc doctor && claude")
+
+
+def managed_workspace_files():
+    return {
+        ".cc/cc": Path(__file__).resolve().read_bytes(),
+        **{f".claude/skills/{name}/SKILL.md": body.encode("utf-8")
+           for name, body in workspace_skills().items()},
+    }
+
+
+def upgrade_cmd(args):
+    """Refresh only recognized generated files; never migrate user data."""
+    root = workspace_root(args)
+    files = managed_workspace_files()
+    names = list(files) if args.refresh_skills else [".cc/cc"]
+    manifest = root / ".cc/managed-files.json"
+    # Reject redirected paths before creating backups or changing any file.
+    directories = {".cc/backups", ".cc/upgrade-candidates"}
+    for name in [*names, ".cc/managed-files.json", *directories,
+                 *(f".cc/upgrade-candidates/{name}" for name in names)]:
+        target = root / name
+        for path in (target, *target.parents):
+            if path == root:
+                break
+            if path.is_symlink():
+                fail(f"Upgrade refuses a symlink in managed path: {path}")
+        if target.exists() and not (target.is_dir() if name in directories else target.is_file()):
+            fail(f"Unexpected file type at {target}; nothing upgraded.")
+    record = json_read(manifest, {"format": 1, "hashes": {}})
+    if not isinstance(record, dict) or record.get("format") != 1 or not isinstance(record.get("hashes"), dict):
+        fail("Unsupported managed-files manifest; nothing upgraded.")
+    hashes = dict(record["hashes"])
+    updates, conflicts = [], []
+    for name in names:
+        path = root / name
+        current = path.read_bytes() if path.exists() else None
+        digest = hashlib.sha256(current).hexdigest() if current is not None else None
+        desired = hashlib.sha256(files[name]).hexdigest()
+        if digest == desired:
+            hashes[name] = desired
+            out(f"Current: {name}")
+        elif current is None or digest == hashes.get(name) or digest in LEGACY_MANAGED_HASHES.get(name, ()):
+            updates.append(name)
+            hashes[name] = desired
+            out(f"{'Would refresh' if args.dry_run else 'Refresh'}: {name}")
+        else:
+            conflicts.append(name)
+            out(f"Preserved customized or unrecognized file: {name}")
+    if not args.refresh_skills:
+        out("Existing local Skills untouched. Use --refresh-skills only to refresh unchanged generated My CC Skills.")
+    if args.dry_run:
+        out(f"Preview only: {len(updates)} refresh(es), {len(conflicts)} preserved conflict(s). No files changed.")
+        return
+    backup = root / ".cc/backups" / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
+    # Back up every existing file before the first replacement. A failed write
+    # can be recovered without relying on a Claude session or installed plugin.
+    to_backup = [root / name for name in updates if (root / name).exists()]
+    new_manifest = {**record, "hashes": hashes}
+    manifest_changed = not manifest.exists() or record != new_manifest
+    if manifest_changed and manifest.exists():
+        to_backup.append(manifest)
+    for path in to_backup:
+        destination = backup / path.relative_to(root)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
+    for name in updates:
+        atomic_write(root / name, files[name].decode("utf-8"))
+        if name == ".cc/cc":
+            (root / name).chmod(0o700)
+    for name in conflicts:
+        candidate = root / ".cc/upgrade-candidates" / name
+        atomic_write(candidate, files[name].decode("utf-8"))
+        out(f"New template for manual comparison: {candidate}")
+    if manifest_changed:
+        json_write(manifest, new_manifest)
+    if to_backup:
+        out(f"Backups: {backup}")
+    out(f"Upgrade finished: {len(updates)} refreshed, {len(conflicts)} preserved conflict(s). Ticket state, workspace.json, context and instructions untouched.")
 
 
 def install_skill(args):
@@ -366,16 +552,9 @@ def decision_cmd(args):
 
 def plan_cmd(args):
     def change(root, t):
-        text = Path(args.file).expanduser().read_text(encoding="utf-8")
-        if not text.strip():
-            fail("Plan file is empty.")
-        atomic_write(ticket_dir(root, t["id"]) / "plan.md", text)
-        t["approved_plan"] = False
-        t["implementation_approved"] = False
-        t["phase"] = "planning"
-        t["next_action"] = "Review and approve plan"
+        import_plan(root, t, args.file)
     _, t = ticket_mutate(args, change)
-    out(f"Updated {t['id']} plan. Previous approval reset; run `cc approve {t['id']} --plan` when approved.")
+    out(f"Saved full {t['id']} plan ({t['plan_sha256']}). Plan approved={t['approved_plan']}; changed content requires fresh approval.")
 
 
 def approve_cmd(args):
@@ -385,12 +564,16 @@ def approve_cmd(args):
             if "No approved plan yet." in plan or not plan.strip():
                 fail("Cannot approve a placeholder plan. Use `cc plan TICKET --file plan.md`.")
             t["approved_plan"] = True
+            t["approved_plan_sha256"] = plan_digest(root, t)
+            t["approved_plan_at"] = now()
             t["phase"] = "ready"
             t["next_action"] = "Request implementation approval"
         if args.implementation:
             if not t.get("approved_plan"):
                 fail("Approve the implementation plan first.")
             t["implementation_approved"] = True
+            t["implementation_plan_sha256"] = plan_digest(root, t)
+            t["implementation_approved_at"] = now()
             t["next_action"] = "Start a repo-specific coding session"
     _, t = ticket_mutate(args, change)
     out(f"{t['id']}: plan approved={t['approved_plan']}, implementation authorized={t['implementation_approved']}")
@@ -398,6 +581,8 @@ def approve_cmd(args):
 
 def checkpoint_cmd(args):
     def change(root, t):
+        if args.plan_file:
+            import_plan(root, t, args.plan_file)
         if args.summary:
             t["summary"] = args.summary
         if args.next:
@@ -415,6 +600,7 @@ Phase: {t['phase']}
 Paused: {'yes' if t['paused'] else 'no'}
 Plan approved: {'yes' if t['approved_plan'] else 'no'}
 Implementation approved: {'yes' if t['implementation_approved'] else 'no'}
+Plan SHA-256: {t.get('plan_sha256') or 'not imported'}
 
 ## Current summary
 {t['summary']}
@@ -434,8 +620,9 @@ Implementation approved: {'yes' if t['implementation_approved'] else 'no'}
 - `decisions.md` — rationale and constraints
 """
         atomic_write(ticket_dir(root, t["id"]) / "handoff.md", handoff)
-    _, t = ticket_mutate(args, change)
+    root, t = ticket_mutate(args, change)
     out(f"Checkpoint saved for {t['id']} ({t['phase']}; paused={t['paused']}). Next: {t['next_action']}")
+    out(f"Plan file: {ticket_dir(root, t['id']) / 'plan.md'}\nPlan SHA-256: {t.get('plan_sha256')}\nPlan approved: {t['approved_plan']} | Implementation approved: {t['implementation_approved']}")
 
 
 def show_cmd(args):
@@ -445,6 +632,7 @@ def show_cmd(args):
     out(f"Jira status: {t.get('jira_status', 'unknown')}\nPlan approved: {t['approved_plan']} | Implementation approved: {t['implementation_approved']}")
     out(f"Summary: {t['summary']}\nNext: {t['next_action']}")
     out(f"Repositories: {', '.join(t.get('repos', {})) or '-'}\nFiles: {ticket_dir(root, t['id'])}")
+    out(f"Plan SHA-256: {t.get('plan_sha256')} | Source: {t.get('plan_source', 'not imported')}")
 
 
 def resume_cmd(args):
@@ -455,11 +643,9 @@ def resume_cmd(args):
     out(f"Phase: {t['phase']} | paused={t['paused']} | last saved: {t['updated_at']}")
     out(f"Approved plan: {t['approved_plan']} | implementation authorization: {t['implementation_approved']}")
     out(f"\nSummary: {t['summary']}\nNext: {t['next_action']}")
-    for name, max_len in (("handoff.md", 4500), ("decisions.md", 3500), ("plan.md", 6500)):
+    for name in ("brief.md", "handoff.md", "decisions.md", "plan.md"):
         content = (directory / name).read_text(encoding="utf-8")
-        out(f"\n## {name}\n{content[:max_len]}")
-        if len(content) > max_len:
-            out(f"[truncated; full file at {directory / name}]")
+        out(f"\n## {name} ({directory / name})\n{content}")
     out("\nCHECK BEFORE CODING: Refresh Jira requirements and Git branch/contract state if stale.")
 
 
@@ -613,18 +799,26 @@ def work_cmd(args):
     if "AGENTS.md" in instruction_files and "CLAUDE.md" in instruction_files:
         out("INFO: Both CLAUDE.md and AGENTS.md exist. Check Claude Code Project instructions setting 'claude-md-and-agents-md'.")
     folder = ticket_dir(root, t["id"])
-    brief = (folder / "brief.md").read_text(encoding="utf-8")[:7000]
-    plan = (folder / "plan.md").read_text(encoding="utf-8")[:12000]
-    decisions = (folder / "decisions.md").read_text(encoding="utf-8")[-6000:]
+    brief = (folder / "brief.md").read_text(encoding="utf-8")
+    plan = (folder / "plan.md").read_text(encoding="utf-8")
+    decisions = (folder / "decisions.md").read_text(encoding="utf-8")
     workorder = f"""# Repo-specific implementation work order
 
 Ticket: {t['id']}
 Repository: {args.repo}
 Ticket title: {t['title']}
+Approved plan SHA-256: {t['approved_plan_sha256']}
 
-The repository and its applicable instructions govern HOW to implement. Jira and the approved ticket plan govern WHAT to deliver. Company policy and safety restrictions take precedence. If constraints conflict, stop and ask. Do not load the command-center workspace's unrelated context. Start by explicitly reading any applicable AGENT.md (singular) and any AGENTS.md/CLAUDE.md not auto-loaded; verify nested instructions when entering subdirectories. Do not assume a file was loaded just because it exists. For both CLAUDE.md and AGENTS.md, confirm the Project instructions setting supports both, or explicitly read the relevant files.
+Before editing code, revalidate relevant Jira requirements and repository state,
+explain the intended scope, and request explicit implementation approval in this
+repository session. Saved plan approval and launch authorization do not replace
+this gate. Start in native Plan Mode; do not edit source before human approval.
+Implement only the steps assigned to the named repository. Cross-repository
+steps provide context; return a handoff for them rather than editing other repos.
 
-Make the smallest correct change. No unrelated refactoring or dependencies. No commits, pushes, PRs, deployment or Jira transitions without explicit authorization. Always verify actual tests. Report what you changed, tests, limitations and blockers. Before ending, run `python3 "$CC_WORKSPACE/.cc/cc" sync {t['id']} --repo {args.repo} --summary 'concise verified result'` (if approved), or provide a concise manual handoff.
+The repository and its applicable instructions govern HOW to implement. Jira and the approved ticket plan govern WHAT to deliver. Company policy and safety restrictions take precedence. If constraints conflict, stop and ask. Do not load the command-center workspace's unrelated context. Start by explicitly reading any applicable AGENT.md (singular) and any AGENTS.md/CLAUDE.md not auto-loaded, plus applicable MEMORY.md, from outermost to innermost directories; verify nested instructions when entering subdirectories. Do not assume a file was loaded just because it exists. For both CLAUDE.md and AGENTS.md, confirm the Project instructions setting supports both, or explicitly read the relevant files.
+
+Make the smallest correct change. No unrelated refactoring or dependencies. No commits, pushes, PRs, deployment or Jira transitions without explicit authorization. Always verify actual tests. Report what you changed, tests, limitations and blockers. Before ending, run `python3 "$CC_ENGINE" sync {t['id']} --repo {args.repo} --summary 'concise verified result'` (if approved), or provide a concise manual handoff.
 
 ## Requirements
 {brief}
@@ -645,16 +839,17 @@ Make the smallest correct change. No unrelated refactoring or dependencies. No c
         t["paused"] = False
         t["next_action"] = f"Implement and test in {args.repo}"
         ticket_save(root, t)
-    argsv = ["claude", "--model", args.model or workspace_config(root)["default_model"], "--name", f"{t['id']}-{args.repo}", "--append-system-prompt-file", str(orderpath), f"Implement ticket {t['id']} in this repository according to the provided approved work order. First confirm local repository instruction files and scope, then ask before changing code if constraints conflict."]
+    argsv = ["claude", "--model", args.model or workspace_config(root)["default_model"], "--name", f"{t['id']}-{args.repo}", "--permission-mode", "plan", "--append-system-prompt-file", str(orderpath), f"Review the approved work order for {t['id']}. Confirm local repository instructions, revalidate requirements and repository state, then request implementation approval before editing code. Do not reconstruct or replace the saved plan unless changes are needed."]
     out(f"Coding location: {workpath}\nRepo instructions detected: {', '.join(instruction_files) or '(none at root)'}")
     if args.dry_run:
-        out("Would launch: " + " ".join(argsv[:6]) + " [work-order path] [initial prompt]")
+        out("Would launch: " + " ".join(argsv[:8]) + " [work-order path] [initial prompt]")
         return
     if not shutil.which("claude"):
         out("Claude Code CLI not found on PATH. Worktree and work order prepared. Install Claude Code then retry `cc work`.")
         return
     env = os.environ.copy()
     env["CC_WORKSPACE"] = str(root)
+    env["CC_ENGINE"] = str(Path(__file__).resolve())
     out("Launching repository Claude. Use /plan and /code-review normally inside this session.\n")
     try:
         subprocess.run(argsv, cwd=workpath, env=env, check=False)
@@ -755,6 +950,9 @@ def dashboard_document(root, token, path, query):
             if not file.resolve().is_relative_to((root / 'state/tickets').resolve()): raise FileNotFoundError()
             return file.read_text(encoding='utf-8')
         ticket = json.loads(read_safe(directory / 'ticket.json'))
+        if (directory / 'plan.md').exists():
+            read_safe(directory / 'plan.md')  # Preserve document path confinement.
+        validate_plan_state(root, ticket)
         body = f'<p><a href="{base}">← All tickets</a></p><h1>{esc(tid)} · {esc(ticket["title"])}</h1><p>{esc(ticket["phase"])} · {"Paused" if ticket["paused"] else "Active"}</p><p>Plan approved: {esc(ticket.get("approved_plan", False))} · Implementation authorized: {esc(ticket.get("implementation_approved", False))}</p><p><b>Next:</b> {esc(ticket.get("next_action", ""))}</p><article><label for="resume">Resume in Claude Code</label><p><input id="resume" readonly value="/cc:resume {esc(tid)}"> <button id="copy">Copy resume command</button><span id="copied" role="status"></span></p></article>'
         for name in ('brief.md', 'plan.md', 'decisions.md', 'handoff.md'):
             file = directory / name
@@ -872,6 +1070,11 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=create_workspace)
 
+    s = sub.add_parser("upgrade", help="Refresh generated compatibility engine; preserve workspace data and custom files")
+    s.add_argument("--dry-run", action="store_true", help="Preview without writing anything")
+    s.add_argument("--refresh-skills", action="store_true", help="Also refresh unchanged generated My CC Skills; preserve custom Skills")
+    s.set_defaults(func=upgrade_cmd)
+
     s = sub.add_parser("install-init-skill", help="Install global /cc-init skill")
     s.add_argument("--destination")
     s.add_argument("--force", action="store_true")
@@ -906,7 +1109,7 @@ def build_parser():
     s.add_argument("--status", choices=("proposed", "approved", "superseded"), default="approved")
     s.set_defaults(func=decision_cmd)
 
-    s = sub.add_parser("plan", help="Replace plan with a reviewed file; reset approval")
+    s = sub.add_parser("plan", help="Import a full plan file; changed content resets approvals")
     s.add_argument("ticket")
     s.add_argument("--file", required=True)
     s.set_defaults(func=plan_cmd)
@@ -920,6 +1123,7 @@ def build_parser():
 
     s = sub.add_parser("checkpoint", help="Save handoff and update local ticket status")
     s.add_argument("ticket")
+    s.add_argument("--plan-file", help="Import the exact native/exported plan; never infer approval")
     s.add_argument("--summary")
     s.add_argument("--next")
     g = s.add_mutually_exclusive_group()
@@ -984,7 +1188,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         args.func(args)
-    except (FileNotFoundError, PermissionError, subprocess.CalledProcessError) as exc:
+    except (OSError, UnicodeError, subprocess.CalledProcessError) as exc:
         fail(str(exc))
 
 

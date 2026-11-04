@@ -16,7 +16,7 @@ manifest = json.loads((plugin / '.claude-plugin' / 'plugin.json').read_text())
 assert entry['name'] == manifest['name'] == 'cc'
 assert entry['version'] == manifest['version'] == '0.1.2'
 assert (plugin / 'scripts' / 'cc').read_bytes() == (root / 'cc').read_bytes()
-for name in ('dashboard','init','pickup','save','resume','status','work','draft'):
+for name in ('dashboard','init','pickup','save','resume','status','work','draft','upgrade'):
     skill = plugin / 'skills' / name / 'SKILL.md'
     assert skill.is_file(), skill
     assert skill.read_text().startswith(f'---\nname: {name}\n'), name

@@ -83,7 +83,10 @@ When TWG is configured, the `/cc-pickup` Skill can query Jira and prepare the fa
 
 ### 2. Plan in Claude Code and persist decisions
 
-Keep using Claude Code's existing `/plan` in the command-center session or inside the repo when appropriate. Save an actual plan to a Markdown file, then:
+Keep using native `/plan` in the same command-center session as pickup. Review
+and finalize the plan, then leave the native execution prompt unapproved and return
+to Manual mode when saving for later. The native Yes options start execution.
+Use the exact native plan file path (or obtain complete content if unavailable), then:
 
 ```bash
 cc plan PAY-104 --file /path/to/reviewed-plan.md
@@ -94,7 +97,20 @@ cc checkpoint PAY-104 --summary "Plan approved" \
   --next "Implement next Monday" --pause
 ```
 
-The explicit `approve` command records your authorization in local state. It does not infer approval merely from a conversation. Revising the plan resets both approval flags.
+`plan --file` imports the complete file; it does not generate plans. Alternatively,
+`checkpoint TICKET --plan-file /exact/path.md --summary 'Draft saved'` imports and
+checkpoints without granting approval. Empty, missing, unreadable or placeholder
+imports fail before checkpointing. No file is selected automatically.
+
+`approve --plan` records explicit acceptance of that revision for future work;
+`approve --implementation` separately authorizes repository launch. Neither a save
+request nor native execution approval is treated as future-plan acceptance.
+Approvals have UTC timestamps and bind to SHA-256 plan hashes. Identical saves
+retain approvals; changed content resets both. Direct edits are checked before
+approval, resume and launch. Legacy flags without hashes require reapproval while
+all saved documents remain intact. See the [workflow and assessment](PLANNING-WORKFLOW.md)
+for metadata, supported plan locations, UI verification limits, and existing-workspace
+engine compatibility.
 
 ### 3. Resume next week, with a fresh context
 
@@ -104,7 +120,7 @@ cc resume PAY-104
 cc checkpoint PAY-104 --unpause --next "Verify Jira and repo state"
 ```
 
-`cc resume` is intentionally read-only. It prints the concise handoff, decisions, and plan, rather than replaying a possibly huge Claude session. Use `/cc-resume PAY-104` inside the coordinator to have Claude check for stale assumptions.
+`cc resume` is intentionally read-only. It prints the full saved brief, handoff, decisions, and plan without replaying the Claude session or truncating plan steps. Use `/cc-resume PAY-104` inside the coordinator to have Claude check for stale assumptions.
 
 ### 4. Launch a **repo-specific** coding session
 
@@ -127,9 +143,9 @@ cc work PAY-104 --repo payment-service
 # Add --clone if the registered repository is not cloned yet.
 ```
 
-`cc work` makes a Git worktree at `~/work/bbc/.cc-worktrees/payment-service/PAY-104` (unless you explicitly set `--no-worktree`), starts a **separate Claude Code interactive session** from that path, and supplies just the approved work order. The work order instructs Claude to read the applicable repo `AGENT.md` (singular) explicitly and check `AGENTS.md`/`CLAUDE.md`. It does not write or replace the repo's instruction files. For projects with both `CLAUDE.md` and `AGENTS.md`, select **Project instructions → claude-md-and-agents-md** in Claude Code's `/config` on a supported version. Verify loading with `/context all`.
+`cc work` makes a Git worktree at `~/work/bbc/.cc-worktrees/payment-service/PAY-104` (unless you explicitly set `--no-worktree`), starts a **separate Claude Code interactive session** from that path, and supplies the complete approved ticket work package with `--permission-mode plan`. The worker revalidates scope and requests implementation approval in that session before source edits. The work order instructs Claude to read the applicable repo `AGENT.md` (singular) explicitly and check `AGENTS.md`/`CLAUDE.md`. It does not write or replace the repo's instruction files. For projects with both `CLAUDE.md` and `AGENTS.md`, select **Project instructions → claude-md-and-agents-md** in Claude Code's `/config` on a supported version. Verify loading with `/context all`.
 
-You can still use native `/plan` and `/code-review` in the repo session. The launcher does not run tests, commit, push, merge, or deploy automatically. After the coding session exits normally, it captures a **Git-state-only checkpoint**; test results and rationale still need explicit recording. It will stop rather than launch coding without both local approvals.
+You can still use native `/plan` and `/code-review` in the repo session. The launcher does not run tests, commit, push, merge, or deploy automatically. After the coding session exits normally, it captures a **Git-state-only checkpoint**; test results and rationale still need explicit recording. It stops before launch without both current, content-bound local approvals. Native Plan Mode provides the initial source-editing gate after launch.
 
 When you finish coding, inside that worker session or back in the coordinator:
 
@@ -168,7 +184,16 @@ python3 -m unittest discover -s tests -v
 
 To clean up: remove a workspace folder only after reviewing its state and backing up whatever your company permits. Remove the global skill at `~/.claude/skills/cc-init/` and the installed `cc` binary/symlink if desired. The installer does not install a background daemon.
 
-Marketplace plugin commands use `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft` after installing `cc@my-cc-marketplace`. The `/cc-*` examples above remain valid for standalone workspace skills.
+Marketplace plugin commands use `/cc:init`, `/cc:upgrade`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft` after installing `cc@my-cc-marketplace`. All namespaced commands use the plugin's bundled engine. The `/cc-*` examples above remain valid for standalone workspace skills.
+
+`upgrade --dry-run` previews a compatibility-engine refresh from the engine you
+are invoking; `upgrade` applies it, backing up recognized generated files first.
+All existing local Skills stay untouched unless you explicitly add
+`--refresh-skills`. Even then, only unchanged generated My CC Skills are refreshed;
+custom and unrelated Skills are preserved. Data, `workspace.json`, context and
+instructions never change during upgrade. Use `/cc:upgrade` with the updated
+plugin so an older `.cc/cc` snapshot need not understand this command. See the
+[upgrade guide](UPGRADING.md) for conflicts, backups and plugin reloads.
 
 ## Local dashboard (v0.1.2+)
 

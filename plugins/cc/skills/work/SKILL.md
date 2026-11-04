@@ -5,10 +5,13 @@ disable-model-invocation: true
 ---
 
 Ticket / repository: $ARGUMENTS
-1. Run `python3 .cc/cc show <TICKET>` and verify the approved plan and implementation approval.
-2. Discover/confirm the target repository. Register it first with `python3 .cc/cc repo add` if necessary.
-3. Explain that `python3 .cc/cc work <TICKET> --repo <REPO>` starts a *separate* Claude Code coding session from that repo's isolated worktree.
-4. Never implement code in the command-center checkout. Repository instructions, including AGENT.md and AGENTS.md, govern implementation details.
-5. Do not perform merge, push, deploy, or Jira Done transitions without separate authorization.
+1. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" show <TICKET>` and read the complete saved plan, brief and decisions. Confirm content-bound plan approval and revalidate relevant Jira and repository changes. If the plan changed, import it and obtain fresh approval first.
+2. Request explicit implementation/launch authorization before recording `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" approve <TICKET> --implementation`. Prior plan approval or a saved checkpoint does not grant this authorization. If launch authorization is already recorded for the unchanged plan, do not ask to record it again.
+3. Discover/confirm the target repository. Register it first with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" repo add` if necessary. Explain the precise `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" work <TICKET> --repo <REPO>` command for a separate terminal; do not run interactive Claude as a nested Bash process.
+4. The launcher starts a separate Claude Code session in the repository's isolated worktree, with the complete saved work package and `--permission-mode plan`. The worker must read applicable repository instructions, revalidate scope, and request implementation approval before source edits. Use native approval there when ready to implement.
+5. Never implement code in the command-center checkout. Repository instructions, including AGENT.md, AGENTS.md, CLAUDE.md and applicable MEMORY.md, retain authority. Check outermost-to-innermost instructions and repeat when entering subfolders.
+6. Do not perform merge, push, deploy, or Jira Done transitions without separate authorization.
 
-**Important:** Run the actual `python3 .cc/cc work ...` command in a *separate terminal*, not via a Bash call from an active Claude Code session. Nested Claude sessions are not the intended execution model.
+When presenting the separate-terminal launcher, resolve `${CLAUDE_PLUGIN_ROOT}` to the actual absolute plugin directory and quote the resulting engine path. Do not assume this variable exists in the developer's separate terminal, and do not substitute the workspace's older `.cc/cc` snapshot. The worker receives `CC_ENGINE` pointing to the same bundled engine for result synchronization.
+
+Use the bundled engine above even when this workspace has an older `.cc/cc` snapshot.

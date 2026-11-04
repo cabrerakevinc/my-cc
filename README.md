@@ -45,11 +45,42 @@ python3 .cc/cc checkpoint PAY-104 --summary 'Investigated' --next 'Plan and revi
 python3 .cc/cc resume PAY-104
 ```
 
-Plugin commands are `/cc:dashboard`, `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
+Plugin commands are `/cc:dashboard`, `/cc:init`, `/cc:upgrade`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
 
 To migrate an existing plugin installation, uninstall `my-cc@my-cc-marketplace`, update the marketplace, install `cc@my-cc-marketplace`, and restart Claude Code. Existing workspace files and ticket state remain usable.
 
 The independent workspace also has non-namespaced local `/cc-*` skills, plus the plugin's `/cc:*` skills. You can continue using native Claude Code `/plan` and `/code-review` unchanged.
+
+### Use an update in an existing command center
+
+Existing ticket folders remain usable; do not reinitialize the workspace.
+For unreleased changes in this checkout, exit Claude Code and run this from your
+existing **command-center folder**, retaining the most recent conversation:
+
+```bash
+claude --continue --plugin-dir /Users/kevincabrera/Code/my-cc/plugins/cc
+```
+
+Use `--resume <session-id>` instead of `--continue` to choose a specific session.
+Adjust the plugin path on another machine. This loads the local plugin for that
+session without publishing a release or changing the installed marketplace copy.
+Use `/cc:save` and the other namespaced `/cc:*` commands, which call its bundled
+engine. The workspace's copied `.cc/cc` and standalone `/cc-*` Skills remain
+separate snapshots; they do not update automatically.
+
+Every namespaced `/cc:*` command uses the bundled plugin engine. For terminal
+compatibility, `/cc:upgrade` safely refreshes the workspace's `.cc/cc` copy.
+**Tickets, state, `workspace.json`, context, instructions, and all existing local
+Skills stay untouched by default.** Refreshing unchanged generated `/cc-*` Skills
+requires an explicit `--refresh-skills` request; customized and unrelated Skills
+are preserved. See [upgrading an existing workspace](docs/UPGRADING.md).
+
+After a new version has actually been published, update the marketplace and
+plugin, then run `/reload-plugins` in an open session to activate pending changes
+on versions that support it, or restart Claude Code. Reloading alone cannot fetch
+unpublished changes. See the [planning guide](docs/PLANNING-WORKFLOW.md#state-repeat-saves-and-existing-workspaces)
+for approval compatibility and the
+[Claude Code reload reference](https://code.claude.com/docs/en/commands).
 
 ## Open your dashboard
 
@@ -82,9 +113,9 @@ Imagine **PAY-104: prevent duplicate charges when a payment request is retried**
 flowchart TD
     subgraph Center[Command center]
         Init["Initialize once: /cc:init"] --> Pickup["Pick up ticket: /cc:pickup PAY-104"]
-        Pickup --> Investigate["Investigate and write a plan"]
+        Pickup --> Investigate["Native /plan: investigate and plan"]
         Investigate --> Approve["Review and approve the plan"]
-        Approve --> Authorize["Explicitly authorize implementation"]
+        Recheck --> Authorize["Explicitly authorize repository launch"]
         Save["Save checkpoint: /cc:save PAY-104"] --> Pause["Close session or switch tickets"]
         Pause --> Resume["Return later: /cc:resume PAY-104"]
         Resume --> Recheck["Recheck requirements and repository state"]
@@ -92,7 +123,8 @@ flowchart TD
     end
     Authorize --> Launch["Separate terminal: python3 .cc/cc work"]
     subgraph Repo[Repository worktree session]
-        Launch --> Implement["Implement using repository instructions"]
+        Launch --> Gate["Native Plan Mode: read repo instructions and request editing approval"]
+        Gate --> Implement["Implement using repository instructions"]
         Implement --> Test["Run tests and review changes"]
     end
     Test --> Sync["Return to command center: sync results and test evidence"]
@@ -126,12 +158,25 @@ python3 .cc/cc phase PAY-104 investigating
 
 Claude should identify the relevant code and propose a scoped plan with tests. For example: reuse the existing idempotency record and test repeated requests with the same key. Treat that as a hypothesis until investigation confirms it fits the repository.
 
-### 2. Review the plan, then save a stopping point
+### 2. Use native Plan Mode, then save for later
 
-Have Claude write the proposed plan to `pay-104-plan.md` in the command-center workspace. Review it, then run these commands **in a terminal from that workspace**:
+Enter `/plan` in the **same session** as pickup. Ask for a minimal implementation
+and testing plan using those findings, without implementing. Review and revise it.
+When the native execution prompt appears, leave it unapproved: dismiss the dialog,
+then use the installed UI's mode controls to return to Manual. Native Yes options
+start execution; they do not mean “approve for next week.”
+
+Explicitly say “I approve this revision for future implementation only,” then run
+`/cc:save PAY-104`. Save imports the complete native plan from its exact known
+path, records decisions, and verifies the checkpoint. If the path is unknown, it
+asks for the path or full content. It never guesses the newest plan file.
+See the [planning workflow guide](docs/PLANNING-WORKFLOW.md) for verified controls,
+the installed-version limitation, and the full Day 1 / Day 7 walkthrough.
+
+Equivalent commands **in a terminal from that workspace**:
 
 ```bash
-python3 .cc/cc plan PAY-104 --file pay-104-plan.md
+python3 .cc/cc plan PAY-104 --file /exact/path/to/native-plan.md
 # Record approval only after you have reviewed and accepted the plan.
 python3 .cc/cc approve PAY-104 --plan
 python3 .cc/cc decision PAY-104 --text 'Reuse existing idempotency records' \
@@ -140,7 +185,7 @@ python3 .cc/cc checkpoint PAY-104 --summary 'Plan reviewed and approved' \
   --next 'Recheck requirements and authorize implementation' --pause
 ```
 
-You can also ask `/cc:save PAY-104` in Claude Code to distill the current facts, decisions, and next action into a checkpoint. Checkpoints are explicit; closing Claude alone does not save the conversation as a ticket handoff.
+For a draft import and checkpoint together, use `checkpoint PAY-104 --plan-file /exact/path/to/native-plan.md --summary 'Draft plan saved'`. This never grants approval. `/cc:save` preserves the full plan while keeping the handoff concise. Checkpoints are explicit; closing Claude alone does not save the conversation as a ticket handoff.
 
 ### 3. Resume tomorrow or next week
 
@@ -158,7 +203,7 @@ python3 .cc/cc resume PAY-104
 python3 .cc/cc checkpoint PAY-104 --unpause --next 'Authorize implementation'
 ```
 
-`resume` is read-only. If the plan changes, save it again with `plan --file` and obtain fresh approvals; replacing a plan resets both approval flags.
+`resume` is read-only. If the plan changes, save it again with `plan --file` and obtain fresh approvals; changed plan content resets both approval flags. Identical imports retain approval. Approval is bound to the full plan hash; old unbound approvals require explicit reapproval.
 
 ### 4. Authorize and launch implementation
 
@@ -172,7 +217,7 @@ python3 .cc/cc work PAY-104 --repo payment-service --dry-run
 python3 .cc/cc work PAY-104 --repo payment-service
 ```
 
-This assumes `payment-service` is already cloned at that path. `/cc:work PAY-104` can help prepare the launch, but run the actual interactive launcher in the separate terminal. It opens Claude Code in an isolated Git worktree with the approved work order. Implement there, follow the repository's instructions, and run its relevant tests. Both plan approval and implementation authorization are required before launch.
+This assumes `payment-service` is already cloned at that path. `/cc:work PAY-104` can help prepare the launch, but run the actual interactive launcher in the separate terminal. It opens Claude Code in an isolated Git worktree with the complete saved work order and native Plan Mode enabled. The worker reads repository instructions, revalidates scope, and requests approval before source edits. Both local plan approval and launch authorization are required before launch; saving alone grants neither implementation nor editing permission.
 
 ### 5. Bring the evidence back and continue delivery
 

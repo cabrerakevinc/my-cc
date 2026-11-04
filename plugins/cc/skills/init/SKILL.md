@@ -10,5 +10,5 @@ Create an independent Claude Code command center in the current directory, using
 2. State the absolute directory that would be initialized; confirm it is empty and get approval before filesystem changes.
 3. Preview with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" init . --name 'WORKSPACE NAME' --profile engineering --dry-run`.
 4. Once approved, initialize with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" init . --name 'WORKSPACE NAME' --profile engineering` using the actual chosen profile/name.
-5. Verify using `python3 .cc/cc doctor`; explain workspace-local durable ticket state, context profiles, and `python3 .cc/cc` command usage.
+5. Verify using `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" doctor`; explain workspace-local durable ticket state and context profiles. Namespaced `/cc:*` commands always use the installed plugin engine. `python3 .cc/cc` and standalone `/cc-*` Skills are compatibility snapshots; use /cc:upgrade to refresh the engine later. Existing local Skills are untouched unless refreshing generated My CC Skills is explicitly requested.
 6. Do not install or modify TWG, AWS, Context7, or credentials. Those remain existing company-approved integrations.

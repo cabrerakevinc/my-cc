@@ -33,9 +33,9 @@ You can now close Claude entirely and later reopen your command center and run `
 ## Before real coding
 
 - On the company Mac, inspect the approved TWG and AWS MCP CLI commands. Configure only permitted operations; the starter does not yet implement them.
-- Plan and explicitly approve the ticket (`cc plan ...`, `cc approve ... --plan`, `cc approve ... --implementation`).
+- Use native `/plan` after pickup in the same session. Leave its execution prompt unapproved when stopping. Import the complete native plan with `cc plan TICKET --file /exact/path.md`, then record explicit future-work acceptance with `cc approve TICKET --plan` and checkpoint. See the [planning guide](PLANNING-WORKFLOW.md).
 - Register one real repo (`cc repo add payment-service PATH`).
-- Launch `cc work PAY-104 --repo payment-service`: this creates/reuses its worktree and starts Claude there, with the approved work order.
+- After resumption and revalidation, explicitly authorize repository launch with `cc approve PAY-104 --implementation`. Run `cc work PAY-104 --repo payment-service` from a separate terminal: it creates/reuses a worktree and starts Claude there with the full work order in native Plan Mode. The worker requests approval before source edits.
 - Confirm repo instructions with Claude Code `/context all`; if both `AGENTS.md` and `CLAUDE.md` exist, configure loading both. Singular `AGENT.md` is explicitly called out in the work order.
 - Use Claude Code's ordinary `/plan` and `/code-review` as needed. Nothing in this starter replaces them.
 
