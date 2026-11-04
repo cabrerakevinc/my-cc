@@ -1,0 +1,19 @@
+# Local configuration and state
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+state/
+context/
+.cc/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+# IDE
+.idea/
+.vscode/
