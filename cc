@@ -29,7 +29,7 @@ import tempfile
 import textwrap
 import uuid
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PHASES = (
     "discovered", "investigating", "planning", "ready", "implementing",
     "testing", "in-review", "awaiting-deployment", "verifying", "completed", "blocked",
@@ -468,7 +468,7 @@ def workspace_skills():
             1. Run `cc show <TICKET>` and read the complete saved plan, brief and decisions. Confirm content-bound plan approval and revalidate relevant Jira and repository changes. If the plan changed, import it and obtain fresh approval first.
             2. Request explicit implementation/launch authorization before recording `cc approve <TICKET> --implementation`. Prior plan approval or a saved checkpoint does not grant this authorization. If launch authorization is already recorded for the unchanged plan, do not ask to record it again.
             3. Discover/confirm the target repository. Register it first with `cc repo add` if necessary. Explain the precise `cc work <TICKET> --repo <REPO>` command for a separate terminal; do not run interactive Claude as a nested Bash process.
-            4. The launcher starts a separate Claude Code session in the repository's isolated worktree, with the complete saved work package and `--permission-mode plan`. The worker must read applicable repository instructions, revalidate scope, and request implementation approval before source edits. Use native approval there when ready to implement.
+            4. The launcher starts a separate Claude Code session in the registered clone by default (or an opt-in worktree), with the complete saved work package and `--permission-mode plan`. The worker must read applicable repository instructions, revalidate scope, and request implementation approval before source edits. Use native approval there when ready to implement.
             5. Never implement code in the command-center checkout. Repository instructions, including AGENT.md, AGENTS.md, CLAUDE.md and applicable MEMORY.md, retain authority. Check outermost-to-innermost instructions and repeat when entering subfolders.
             6. Do not perform merge, push, deploy, or Jira Done transitions without separate authorization.
         """, manual=True),
@@ -516,7 +516,7 @@ def create_workspace(args):
         "schema_version": 1, "workspace_id": str(uuid.uuid4()),
         "name": args.name, "profile": args.profile, "created_at": now(),
         "repo_base": "../repositories", "worktree_base": "../.cc-worktrees",
-        "default_model": "sonnet",
+        "default_model": "sonnet", "worktrees": False,
     }
     json_write(root / "workspace.json", cfg)
     atomic_write(root / "workspace.yaml", NEXT_STEPS_YAML)
@@ -544,7 +544,7 @@ You are a **coordinator**, not the repository coding session.
 - Put work and decisions into `state/tickets/` with `python3 .cc/cc checkpoint` after meaningful milestones.
 - Always preserve ticket acceptance criteria, approved scope, and contradictory decisions.
 - Use native `/plan` in this session. Leave it without authorizing execution when saving for later. Manual `/cc-save` imports the complete plan; plan approval is separate from implementation authorization.
-- For coding, run `python3 .cc/cc work TICKET --repo NAME` in a **separate terminal**; this launches Claude **inside the repository worktree**. Do not spawn nested Claude Code processes from within this conversation.
+- For coding, run `python3 .cc/cc work TICKET --repo NAME` in a **separate terminal**; this launches Claude **inside the registered clone (or an opt-in worktree)**. Do not spawn nested Claude Code processes from within this conversation.
 - Repository `CLAUDE.md`, `AGENTS.md`, and `AGENT.md` govern implementation. Report conflicts; never override them with workspace style preferences.
 - Never push, merge, deploy, send messages, or transition Jira issues without explicit authorization.
 - Do not claim a CLI action succeeded until it actually ran successfully.
@@ -812,6 +812,8 @@ def show_cmd(args):
     out(f"Jira status: {t.get('jira_status', 'unknown')}\nPlan approved: {t['approved_plan']} | Implementation approved: {t['implementation_approved']}")
     out(f"Summary: {t['summary']}\nNext: {t['next_action']}")
     out(f"Repositories: {', '.join(t.get('repos', {})) or '-'}\nFiles: {ticket_dir(root, t['id'])}")
+    for name, rec in sorted(t.get("repos", {}).items()):
+        out(f"  {name}: {rec['worktree']} | branch: {rec.get('branch') or '(detached HEAD)'}")
     out(f"Plan SHA-256: {t.get('plan_sha256')} | Source: {t.get('plan_source', 'not imported')}")
 
 
@@ -932,6 +934,10 @@ def worktree_path(root: Path, name: str, ticket: str):
 
 def work_cmd(args):
     root = workspace_root(args)
+    cfg = workspace_config(root)
+    if "worktrees" in cfg and not isinstance(cfg["worktrees"], bool):
+        fail("workspace.json: worktrees must be true or false")
+    use_worktree = cfg.get("worktrees", False) if args.worktree is None else args.worktree
     t = ticket_load(root, args.ticket)
     if not t.get("approved_plan") or not t.get("implementation_approved"):
         fail("Implementation needs an approved plan and explicit authorization. Use `cc approve TICKET --plan`, then `cc approve TICKET --implementation` after human approval.")
@@ -952,10 +958,10 @@ def work_cmd(args):
             subprocess.run(["git", "clone", record["remote"], str(repo)], check=True)
     if not repo.exists() and not args.dry_run:
         fail(f"Missing repo: {repo}")
-    workpath = repo if args.no_worktree else worktree_path(root, args.repo, t["id"])
+    workpath = worktree_path(root, args.repo, t["id"]) if use_worktree else repo
     branch = f"cc/{t['id'].lower()}"
     base_ref = args.base or "HEAD"
-    if not args.no_worktree and not workpath.exists():
+    if use_worktree and not workpath.exists():
         if args.dry_run:
             out(f"Would create worktree at {workpath} for branch {branch}")
         else:
@@ -967,13 +973,19 @@ def work_cmd(args):
                 git_run(repo, "worktree", "add", "-b", branch, str(workpath), base_ref)
     if workpath.exists() and not args.dry_run:
         git_run(workpath, "rev-parse", "--show-toplevel")
+    if workpath.exists():
+        branch = git_run(workpath, "branch", "--show-current").stdout.strip()
+    elif not use_worktree:
+        branch = ""
+    if not use_worktree:
+        out("Using the current checkout; no branch is created or switched. --base only applies to new worktrees.")
     instruction_files = []
     if workpath.exists():
         for name in ("CLAUDE.md", "AGENTS.md", "AGENT.md", ".claude/CLAUDE.md", ".claude/AGENTS.md"):
             if (workpath / name).exists():
                 instruction_files.append(name)
     if not instruction_files:
-        out("WARNING: No repository-level instruction file detected at worktree root. Nested files may still apply.")
+        out("WARNING: No repository-level instruction file detected at working root. Nested files may still apply.")
     if "AGENT.md" in instruction_files:
         out("INFO: AGENT.md (singular) needs explicit reading; launcher includes an instruction to do so.")
     if "AGENTS.md" in instruction_files and "CLAUDE.md" in instruction_files:
@@ -1014,18 +1026,21 @@ Make the smallest correct change. No unrelated refactoring or dependencies. No c
         atomic_write(orderpath, workorder)
         actual_base = git_run(workpath, "rev-parse", "HEAD").stdout.strip()
         old = t.setdefault("repos", {}).get(args.repo, {})
-        t["repos"][args.repo] = {"path": str(repo), "worktree": str(workpath), "branch": branch if not args.no_worktree else "", "base_sha": old.get("base_sha") or actual_base, "last_sync": old.get("last_sync", "")}
+        t["repos"][args.repo] = {"path": str(repo), "worktree": str(workpath), "branch": branch, "base_sha": old.get("base_sha") or actual_base, "last_sync": old.get("last_sync", "")}
         t["phase"] = "implementing"
         t["paused"] = False
         t["next_action"] = f"Implement and test in {args.repo}"
         ticket_save(root, t)
     argsv = ["claude", "--model", args.model or workspace_config(root)["default_model"], "--name", f"{t['id']}-{args.repo}", "--permission-mode", "plan", "--append-system-prompt-file", str(orderpath), f"Review the approved work order for {t['id']}. Confirm local repository instructions, revalidate requirements and repository state, then request implementation approval before editing code. Do not reconstruct or replace the saved plan unless changes are needed."]
     out(f"Coding location: {workpath}\nRepo instructions detected: {', '.join(instruction_files) or '(none at root)'}")
+    branch_label = branch or ("(detached HEAD)" if workpath.exists() else "(not yet cloned)")
+    out(f"Branch: {branch_label}")
+    out("Git log: " + shlex.join(["git", "-C", str(workpath), "log", "--oneline", branch or "HEAD", "--"]))
     if args.dry_run:
         out("Would launch: " + " ".join(argsv[:8]) + " [work-order path] [initial prompt]")
         return
     if not shutil.which("claude"):
-        out("Claude Code CLI not found on PATH. Worktree and work order prepared. Install Claude Code then retry `cc work`.")
+        out("Claude Code CLI not found on PATH. Working location and work order prepared. Install Claude Code then retry `cc work`.")
         return
     env = os.environ.copy()
     env["CC_WORKSPACE"] = str(root)
@@ -1339,13 +1354,16 @@ def build_parser():
     a = repo_sub.add_parser("list", help="List registered repositories")
     a.set_defaults(func=repo_list)
 
-    s = sub.add_parser("work", help="Launch Claude inside a repository worktree")
+    s = sub.add_parser("work", help="Launch Claude in the registered clone or an opt-in worktree")
     s.add_argument("ticket")
     s.add_argument("--repo", required=True)
     s.add_argument("--model", default=None)
     s.add_argument("--base", default="HEAD", help="Base ref for a new worktree, e.g. origin/main; no automatic fetch")
     s.add_argument("--clone", action="store_true", help="Explicitly clone registered remote if absent")
-    s.add_argument("--no-worktree", action="store_true")
+    mode = s.add_mutually_exclusive_group()
+    mode.add_argument("--worktree", dest="worktree", action="store_true", help="Use a worktree, overriding workspace.json")
+    mode.add_argument("--no-worktree", dest="worktree", action="store_false", help="Use the current checkout, overriding workspace.json")
+    s.set_defaults(worktree=None)
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=work_cmd)
 

@@ -14,7 +14,7 @@ assert entry['source'] == './plugins/cc'
 plugin = root / entry['source']
 manifest = json.loads((plugin / '.claude-plugin' / 'plugin.json').read_text())
 assert entry['name'] == manifest['name'] == 'cc'
-assert entry['version'] == manifest['version'] == '0.2.0'
+assert entry['version'] == manifest['version'] == '0.3.0'
 assert (plugin / 'scripts' / 'cc').read_bytes() == (root / 'cc').read_bytes()
 for name in ('dashboard','init','pickup','save','resume','status','work','draft','upgrade'):
     skill = plugin / 'skills' / name / 'SKILL.md'

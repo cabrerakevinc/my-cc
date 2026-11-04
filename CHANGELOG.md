@@ -2,6 +2,11 @@
 
 All notable changes are documented here. Versions follow Semantic Versioning.
 
+## [0.3.0] — 2026-11-04
+
+- **Breaking:** `cc work` now uses the registered clone/current checkout by default, including for existing workspaces with no `worktrees` key. `cc upgrade` preserves `workspace.json` and existing worktree records; it does not infer or migrate the setting. Set `"worktrees": true` in `workspace.json` before upgrading to retain worktree launches and reuse existing ticket worktrees, or pass `--worktree` for one run. `--no-worktree` forces the clone. Existing worktrees are left on disk.
+- Record the actual branch in both launch modes, show it with `cc show`, and print the working path and a ready-to-run `git log` command. Checkout mode preserves the current branch and uncommitted changes; `--base` remains limited to new worktree branches and does not fetch.
+
 ## [0.2.0] — 2026-11-04
 
 - Add deterministic, read-only `next-steps` guidance after ticket commands and Skills.

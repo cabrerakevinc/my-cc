@@ -122,7 +122,7 @@ flowchart TD
         Recheck --> Investigate
     end
     Authorize --> Launch["Separate terminal: python3 .cc/cc work"]
-    subgraph Repo[Repository worktree session]
+    subgraph Repo[Repository coding session]
         Launch --> Gate["Native Plan Mode: read repo instructions and request editing approval"]
         Gate --> Implement["Implement using repository instructions"]
         Implement --> Test["Run tests and review changes"]
@@ -224,7 +224,7 @@ python3 .cc/cc work PAY-104 --repo payment-service --dry-run
 python3 .cc/cc work PAY-104 --repo payment-service
 ```
 
-This assumes `payment-service` is already cloned at that path. `/cc:work PAY-104` can help prepare the launch, but run the actual interactive launcher in the separate terminal. It opens Claude Code in an isolated Git worktree with the complete saved work order and native Plan Mode enabled. The worker reads repository instructions, revalidates scope, and requests approval before source edits. Both local plan approval and launch authorization are required before launch; saving alone grants neither implementation nor editing permission.
+This assumes `payment-service` is already cloned at that path. `/cc:work PAY-104` can help prepare the launch, but run the actual interactive launcher in the separate terminal. It opens Claude Code in the registered clone by default (or an opt-in Git worktree) with the complete saved work order and native Plan Mode enabled. The worker reads repository instructions, revalidates scope, and requests approval before source edits. Both local plan approval and launch authorization are required before launch; saving alone grants neither implementation nor editing permission.
 
 ### 5. Bring the evidence back and continue delivery
 
@@ -261,7 +261,7 @@ Local phases do not update Jira. PR creation, merge, deployment, and Jira transi
 | `work-orders/` and `work-results/` in that ticket folder | Repository work orders, Git state, and reported test evidence |
 | `state/index.sqlite` | Rebuildable index for ticket status queries |
 
-These files live in the command-center workspace. Implementation changes live in the repository worktree. Keep the workspace and its state when closing Claude or switching tickets; a new empty workspace has its own independent history.
+These files live in the command-center workspace. Implementation changes live in the registered clone or an opted-in worktree. Keep the workspace and its state when closing Claude or switching tickets; a new empty workspace has its own independent history.
 
 ## Work in a repository, not in the command center
 
@@ -274,7 +274,7 @@ python3 .cc/cc work PAY-104 --repo payment-service --dry-run
 python3 .cc/cc work PAY-104 --repo payment-service
 ```
 
-The launcher creates/reuses an isolated worktree and starts a separate Claude Code conversation from that repository. It calls out applicable `AGENT.md` (singular), `AGENTS.md`, and `CLAUDE.md` instructions; do not assume the singular name is automatically loaded. **Repository engineering conventions govern implementation.** The approved ticket plan governs requirements; if they conflict, Claude must stop and ask.
+The launcher uses the registered clone by default and starts a separate Claude Code conversation from that repository. Set `"worktrees": true` in `workspace.json` to create/reuse isolated worktrees; `--worktree` and `--no-worktree` override the setting for one run. It calls out applicable `AGENT.md` (singular), `AGENTS.md`, and `CLAUDE.md` instructions; do not assume the singular name is automatically loaded. **Repository engineering conventions govern implementation.** The approved ticket plan governs requirements; if they conflict, Claude must stop and ask.
 
 ## Reusable workspaces and persistent context
 
@@ -289,7 +289,7 @@ Use the same plugin to create `~/work/bbc/command-center`, `~/work/bevz/command-
 - Python 3.10+ and Git required. Claude Code required for interactive coding; Python CLI uses standard library only.
 - Plugin installation does not modify user shell configuration. Optional `./install.sh` installs a global `cc` CLI and unprefixed global `/cc-init`, but is **not necessary** for the marketplace plugin.
 
-Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.2.0](docs/releases/v0.2.0.md).
+Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.3.0](docs/releases/v0.3.0.md).
 
 ## Development and validation
 

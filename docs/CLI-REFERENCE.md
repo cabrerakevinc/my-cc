@@ -156,11 +156,13 @@ After you separately approve implementation:
 cc approve PAY-104 --implementation
 cc work PAY-104 --repo payment-service --dry-run
 cc work PAY-104 --repo payment-service
-# If needed, select a verified base branch explicitly: --base origin/main
+# With worktrees, select a verified base explicitly: --worktree --base origin/main
 # Add --clone if the registered repository is not cloned yet.
 ```
 
-`cc work` makes a Git worktree at `~/work/bbc/.cc-worktrees/payment-service/PAY-104` (unless you explicitly set `--no-worktree`), starts a **separate Claude Code interactive session** from that path, and supplies the complete approved ticket work package with `--permission-mode plan`. The worker revalidates scope and requests implementation approval in that session before source edits. The work order instructs Claude to read the applicable repo `AGENT.md` (singular) explicitly and check `AGENTS.md`/`CLAUDE.md`. It does not write or replace the repo's instruction files. For projects with both `CLAUDE.md` and `AGENTS.md`, select **Project instructions → claude-md-and-agents-md** in Claude Code's `/config` on a supported version. Verify loading with `/context all`.
+`cc work` uses the registered clone by default. Set `"worktrees": true` in `workspace.json` to create/reuse a Git worktree at `~/work/bbc/.cc-worktrees/payment-service/PAY-104` (under `worktree_base`, default `../.cc-worktrees`). Missing or `false` means the clone. Mutually exclusive `--worktree` / `--no-worktree` override that setting for one run. It prints the working path, branch, and a ready-to-run `git log` command in both modes, records the actual branch in ticket state and `cc show`, and starts a **separate Claude Code interactive session** from that path with the complete approved ticket work package with `--permission-mode plan`. The worker revalidates scope and requests implementation approval in that session before source edits. The work order instructs Claude to read the applicable repo `AGENT.md` (singular) explicitly and check `AGENTS.md`/`CLAUDE.md`. It does not write or replace the repo's instruction files. For projects with both `CLAUDE.md` and `AGENTS.md`, select **Project instructions → claude-md-and-agents-md** in Claude Code's `/config` on a supported version. Verify loading with `/context all`.
+
+Checkout mode uses the clone as it stands, including uncommitted changes. It does not create or switch branches, apply `--base`, or fetch. To prepare a ticket branch yourself, run `git -C /path/to/payment-service switch -c cc/pay-104 origin/main` with a verified local base ref before launching. `--base` applies only when creating a new worktree branch; neither mode fetches automatically. Detached HEAD is displayed explicitly and has an empty branch name in state.
 
 You can still use native `/plan` and `/code-review` in the repo session. The launcher does not run tests, commit, push, merge, or deploy automatically. After the coding session exits normally, it captures a **Git-state-only checkpoint**; test results and rationale still need explicit recording. It stops before launch without both current, content-bound local approvals. Native Plan Mode provides the initial source-editing gate after launch.
 
@@ -171,7 +173,7 @@ cc sync PAY-104 --repo payment-service --summary "Minimal fix implemented" --tes
 cc checkpoint PAY-104 --summary "Implementation ready for review" --next "Run code-review and prepare PR" --pause
 ```
 
-`cc sync` captures branch, HEAD commit, local Git status, diff summary (against the original worktree base), and user-supplied test evidence in the ticket workspace. It does not mark a test as passed on its own. `CC_WORKSPACE` is provided to workers, so they can call `cc` without navigating back to the command center.
+`cc sync` captures branch, HEAD commit, local Git status, diff summary (against the original session base), and user-supplied test evidence in the ticket workspace. It does not mark a test as passed on its own. `CC_WORKSPACE` is provided to workers, so they can call `cc` without navigating back to the command center.
 
 ### 5. Continue normal delivery workflow
 

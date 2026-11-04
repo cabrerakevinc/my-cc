@@ -510,6 +510,70 @@ Ticket: $ARGUMENTS
         self.assertEqual(updated["custom_field"], {"keep": "me"})
         self.assertIn("Legacy reviewed plan", plan.read_text())
 
+    def test_worktree_setting_overrides_checkout_state_and_sync(self):
+        self.create_ticket()
+        repo = self.ws.parent / "repositories" / "payment service"
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "developer", str(repo)], check=True)
+        (repo / "README.md").write_text("Initial\n")
+        subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "init"], check=True)
+        self.run_cc("repo", "add", "service", str(repo))
+        plan = self.root / "plan.md"
+        plan.write_text("# Plan\nVerify checkout and worktree launches.\n")
+        self.run_cc("plan", "PAY-104", "--file", str(plan))
+        self.run_cc("approve", "PAY-104", "--plan")
+        self.run_cc("approve", "PAY-104", "--implementation")
+        fakebin = self.root / "fakebin"
+        fakebin.mkdir()
+        log = self.root / "launch.log"
+        fake = fakebin / "claude"
+        fake.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" > "$CC_TEST_WORK_LOG"\n')
+        fake.chmod(0o755)
+        env = {"PATH": f"{fakebin}:{os.environ.get('PATH', '')}", "CC_TEST_WORK_LOG": str(log)}
+        cfgpath = self.ws / "workspace.json"
+        cfg = json.loads(cfgpath.read_text())
+        self.assertIs(cfg["worktrees"], False)
+        # Checkout mode preserves dirty files and ignores even an unavailable base.
+        (repo / "README.md").write_text("Uncommitted work\n")
+        cases = [(None, (), False), (False, (), False), (True, (), True),
+                 (False, ("--worktree",), True), (True, ("--no-worktree",), False),
+                 (None, ("--worktree",), True), (None, ("--no-worktree",), False)]
+        for setting, flags, worktree in cases:
+            with self.subTest(setting=setting, flags=flags):
+                cfg.pop("worktrees", None)
+                if setting is not None:
+                    cfg["worktrees"] = setting
+                cfgpath.write_text(json.dumps(cfg))
+                expected = self.ws.parent / ".cc-worktrees/service/PAY-104" if worktree else repo
+                branch = "cc/pay-104" if worktree else "developer"
+                args = ("work", "PAY-104", "--repo", "service", *flags)
+                if not worktree:
+                    args += ("--base", "does-not-exist")
+                before = self.workspace_snapshot()
+                preview = self.run_cc(*args, "--dry-run", env=env)
+                self.assertEqual(before, self.workspace_snapshot())
+                self.assertIn(f"Coding location: {expected}", preview.stdout)
+                result = self.run_cc(*args, env=env)
+                self.assertEqual(log.read_text().strip(), str(expected))
+                self.assertIn(f"Branch: {branch}", result.stdout)
+                command = next(line.removeprefix("Git log: ") for line in result.stdout.splitlines() if line.startswith("Git log: "))
+                self.assertEqual(subprocess.run(shlex.split(command), capture_output=True).returncode, 0)
+                state = json.loads((self.ticket_files() / "ticket.json").read_text())
+                self.assertEqual(state["repos"]["service"]["branch"], branch)
+                self.assertEqual(state["repos"]["service"]["worktree"], str(expected))
+                synced = json.loads((self.ticket_files() / "work-results/service.json").read_text())
+                self.assertEqual(synced["branch"], branch)
+                self.assertIn(f"branch: {branch}", self.run_cc("show", "PAY-104").stdout)
+                self.assertEqual((repo / "README.md").read_text(), "Uncommitted work\n")
+                self.assertEqual(subprocess.check_output(["git", "-C", str(repo), "branch", "--show-current"], text=True).strip(), "developer")
+        cfg["worktrees"] = "false"
+        cfgpath.write_text(json.dumps(cfg))
+        invalid = self.run_cc("work", "PAY-104", "--repo", "service", "--dry-run", success=False)
+        self.assertIn("worktrees must be true or false", invalid.stderr)
+        conflict = self.run_cc("work", "PAY-104", "--repo", "service", "--worktree", "--no-worktree", success=False)
+        self.assertNotEqual(conflict.returncode, 0)
+
     def test_repository_worktree_isolation_and_instruction_detection(self):
         self.create_ticket()
         repo = self.ws.parent / "repositories" / "payment-service"
@@ -526,7 +590,7 @@ Ticket: $ARGUMENTS
         self.run_cc("plan", "PAY-104", "--file", str(plan))
         self.run_cc("approve", "PAY-104", "--plan")
         self.run_cc("approve", "PAY-104", "--implementation")
-        preview = self.run_cc("work", "PAY-104", "--repo", "payment-service", "--dry-run").stdout
+        preview = self.run_cc("work", "PAY-104", "--repo", "payment-service", "--worktree", "--dry-run").stdout
         self.assertIn("Would create worktree", preview)
         self.assertIn("--permission-mode plan", preview)
         fakebin = self.root / "fakebin"
@@ -536,7 +600,7 @@ Ticket: $ARGUMENTS
         fakeclaude.write_text(fakeclaude.read_text() + "printf '%s\\n' \"$@\" > \"$CC_TEST_WORK_LOG.args\"\n")
         fakeclaude.chmod(0o755)
         log = self.root / "fakeclaude.log"
-        result = self.run_cc("work", "PAY-104", "--repo", "payment-service", env={"PATH": f"{fakebin}:{os.environ.get('PATH', '')}", "CC_TEST_WORK_LOG": str(log)})
+        result = self.run_cc("work", "PAY-104", "--repo", "payment-service", "--worktree", env={"PATH": f"{fakebin}:{os.environ.get('PATH', '')}", "CC_TEST_WORK_LOG": str(log)})
         self.assertIn("AGENT.md", result.stdout)
         argv = Path(str(log) + ".args").read_text().splitlines()
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "plan")
