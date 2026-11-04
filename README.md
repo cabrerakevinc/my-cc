@@ -2,7 +2,7 @@
 
 **Engineering-first, local-first command centers for Claude Code.** Save Jira ticket plans and decisions, pause for days or weeks, resume from durable checkpoints, and launch coding sessions inside the correct repository/worktree so repository-specific instructions remain relevant.
 
-**Version:** `0.2.0` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
+**Version:** `0.4.0` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
 
 > This project is an independent Claude Code plugin and local Python utility. It is not affiliated with Anthropic, Atlassian, or AWS.
 
@@ -45,7 +45,7 @@ python3 .cc/cc checkpoint PAY-104 --summary 'Investigated' --next 'Plan and revi
 python3 .cc/cc resume PAY-104
 ```
 
-Plugin commands are `/cc:dashboard`, `/cc:init`, `/cc:upgrade`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
+Plugin commands are `/cc:approve`, `/cc:dashboard`, `/cc:init`, `/cc:upgrade`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
 
 To migrate an existing plugin installation, uninstall `my-cc@my-cc-marketplace`, update the marketplace, install `cc@my-cc-marketplace`, and restart Claude Code. Existing workspace files and ticket state remain usable.
 
@@ -173,6 +173,8 @@ When the native execution prompt appears, leave it unapproved: dismiss the dialo
 then use the installed UI's mode controls to return to Manual. Native Yes options
 start execution; they do not mean “approve for next week.”
 
+Use `/cc:approve PAY-104 --plan` to review and accept the saved plan in Claude Code. Use `/cc:approve PAY-104 --implementation` separately to authorize repository launch. Each Skill records only its explicitly accepted scope and verifies the saved approval; it does not launch a worker or edit code.
+
 Explicitly say “I approve this revision for future implementation only,” then run
 `/cc:save PAY-104`. Save imports the complete native plan from its exact known
 path, records decisions, and verifies the checkpoint. If the path is unknown, it
@@ -289,7 +291,7 @@ Use the same plugin to create `~/work/bbc/command-center`, `~/work/bevz/command-
 - Python 3.10+ and Git required. Claude Code required for interactive coding; Python CLI uses standard library only.
 - Plugin installation does not modify user shell configuration. Optional `./install.sh` installs a global `cc` CLI and unprefixed global `/cc-init`, but is **not necessary** for the marketplace plugin.
 
-Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.3.0](docs/releases/v0.3.0.md).
+Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.4.0](docs/releases/v0.4.0.md).
 
 ## Development and validation
 

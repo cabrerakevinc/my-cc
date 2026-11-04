@@ -77,8 +77,16 @@ cannot retain implementation permission in the recommendations. Arbitrary
 `next_action` text is never interpreted as an executable command. The handoff
 retains the recorded next action, blockers and repository-specific details.
 
-There is no `/cc:approve` or `/cc:plan`. Approval therefore displays only its
-terminal form; native planning and the save Skill display only Claude Code forms.
+Approval guidance supports `/cc:approve TICKET --plan` and
+`/cc:approve TICKET --implementation` as well as their terminal equivalents.
+`display: slash` shows the Skill, `cli` shows the Python command, and `both`
+shows both for the same action. The standalone forms are `/cc-approve`.
+The approval Skill reviews the saved revision and records only the explicitly
+accepted scope; selecting the Skill alone does not approve anything. Plan
+acceptance, launch authorization, and the worker's native editing approval remain
+separate. A changed or legacy plan requires content-bound reapproval.
+
+There is no `/cc:plan`. Native planning and the save Skill display only Claude Code forms.
 The `plan` CLI command imports an exact file and is not a native planning or full
 save Skill equivalent. A `work` terminal example is included only when the ticket
 already records exactly one repository; otherwise the work Skill handles selection

@@ -28,7 +28,7 @@ class PluginPackagingTests(unittest.TestCase):
         self.assertEqual(manifest["name"], "cc")
         self.assertEqual(manifest["version"], entry["version"])
         self.assertEqual((plugin / "scripts/cc").read_bytes(), CLI.read_bytes())
-        expected = {"dashboard", "init", "pickup", "save", "resume", "status", "work", "draft", "upgrade"}
+        expected = {"approve", "dashboard", "init", "pickup", "save", "resume", "status", "work", "draft", "upgrade"}
         self.assertEqual({p.name for p in (plugin / "skills").iterdir()}, expected)
         for name in expected:
             text = (plugin / "skills" / name / "SKILL.md").read_text()
@@ -266,10 +266,34 @@ Ticket: $ARGUMENTS
         self.save_guidance_plan()
         self.guidance_config("slash")
         text = self.guidance()
-        self.assertIn("Terminal:", text)  # Approval has no slash equivalent.
-        self.assertIn("approve PAY-104 --plan", text)
-        self.assertNotIn("/cc:approve", text)
+        self.assertNotIn("Terminal:", text)
+        self.assertIn("/cc:approve PAY-104 --plan", text)
         self.assertIn("/cc-status", self.run_cc("next-steps", "--surface", "standalone").stdout)
+
+    def test_approval_guidance_formats_scopes_and_read_only_behavior(self):
+        self.create_ticket()
+        self.save_guidance_plan()
+        for scope in ("plan", "implementation"):
+            for display in ("slash", "cli", "both"):
+                self.guidance_config(display, maximum=1)
+                before = self.workspace_snapshot()
+                for surface, prefix in (("plugin", "/cc:"), ("standalone", "/cc-")):
+                    with self.subTest(scope=scope, display=display, surface=surface):
+                        text = self.run_cc("next-steps", "PAY-104", "--surface", surface).stdout
+                        self.assertEqual("Claude Code:" in text, display != "cli")
+                        self.assertEqual("Terminal:" in text, display != "slash")
+                        if display != "cli":
+                            self.assertIn(f"{prefix}approve PAY-104 --{scope}", text)
+                        self.assertNotIn("Optional:", text)
+                        self.assertEqual(before, self.workspace_snapshot())
+            self.run_cc("approve", "PAY-104", f"--{scope}")
+            state = json.loads((self.ticket_files() / "ticket.json").read_text())
+            self.assertTrue(state["approved_plan"])
+            self.assertEqual(state["implementation_approved"], scope == "implementation")
+        self.guidance_config("slash", maximum=1)
+        self.assertIn("/cc:work PAY-104", self.guidance())
+        (self.ticket_files() / "plan.md").write_text("# Revised plan\nReview this revision again.\n")
+        self.assertIn("/cc:approve PAY-104 --plan", self.guidance())
 
     def test_guidance_disabled_and_invalid_configuration(self):
         self.create_ticket()

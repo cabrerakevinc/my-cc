@@ -29,7 +29,7 @@ import tempfile
 import textwrap
 import uuid
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PHASES = (
     "discovered", "investigating", "planning", "ready", "implementing",
     "testing", "in-review", "awaiting-deployment", "verifying", "completed", "blocked",
@@ -248,9 +248,11 @@ def recommend_next_steps(ticket, has_plan, plan_finalized=False, standalone=Fals
                        f"/plan Prepare the implementation and test plan for {tid}"), save]
     if not ticket.get("approved_plan"):
         return [action(f"Review the saved plan for {tid}; record approval only after explicit acceptance",
+                       slash=f"{prefix}approve {tid} --plan",
                        cli=f"approve {tid} --plan")]
     if not ticket.get("implementation_approved"):
         return [action(f"Request explicit implementation/launch authorization for {tid}; record it only when granted",
+                       slash=f"{prefix}approve {tid} --implementation",
                        cli=f"approve {tid} --implementation")]
     if phase in ("discovered", "investigating", "planning", "ready"):
         # Repository selection belongs to the existing work Skill. Render a
@@ -424,6 +426,15 @@ def skill(name: str, description: str, steps: str, manual: bool = False):
 
 def workspace_skills():
     skills = {
+        "cc-approve": skill("cc-approve", "Review and record explicit plan acceptance or implementation launch authorization", """
+            Ticket / approval scope: $ARGUMENTS
+            1. Run `cc show <TICKET>` and read the complete saved plan, brief, and relevant decisions. Use effective content-bound approvals, not historical approval flags or decision-log claims. A placeholder or missing plan must be saved with /cc-save first; never reconstruct or replace the plan during approval.
+            2. Handle exactly one scope: `--plan` accepts the exact saved plan revision for future work; `--implementation` authorizes launching a repository coding session for the approved revision. If scope or ticket is missing or ambiguous, clarify it before recording approval. Do not combine both scopes.
+            3. Present the revision and scope for explicit acceptance unless the user has already reviewed and explicitly authorized this exact unchanged revision and scope in the current conversation. Invoking this Skill, resuming, saving, native Plan Mode approval, and historical decisions alone do not establish that acceptance. If the plan changes, show the changes and obtain fresh acceptance. Do not repeatedly request an authorization already given for this revision and scope.
+            4. For `--implementation`, require effective plan approval first; otherwise explain the missing prerequisite and stop without recording either approval. This authorizes launch only; the repository worker still starts in native Plan Mode and requests approval before source edits.
+            5. After acceptance, run only `cc approve <TICKET> --plan` or `cc approve <TICKET> --implementation` for the chosen scope. Verify with `cc show <TICKET>` and report the plan hash and both effective approval states. Do not claim approval if the command failed or verification invalidates it.
+            6. This Skill records local approval only. Do not launch a worker, edit repository code, commit, push, create a PR, deploy, or transition Jira. Display configured next-step guidance without executing it.
+        """, manual=True),
         "cc-upgrade": skill("cc-upgrade", "Refresh My CC compatibility files without changing ticket state", """
             Run the updated plugin's /cc:upgrade to refresh this workspace's compatibility engine.
             When using a standalone updated engine, run `cc upgrade --dry-run`, then `cc upgrade`.

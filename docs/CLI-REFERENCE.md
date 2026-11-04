@@ -120,6 +120,8 @@ checkpoints without granting approval. Empty, missing, unreadable or placeholder
 imports fail before checkpointing. No file is selected automatically.
 
 `approve --plan` records explicit acceptance of that revision for future work;
+In Claude Code, use `/cc:approve PAY-104 --plan` or `/cc:approve PAY-104 --implementation` to review and explicitly accept one scope at a time. The Skill verifies the current saved revision and records approval through the bundled engine; it does not launch or implement.
+
 `approve --implementation` separately authorizes repository launch. Neither a save
 request nor native execution approval is treated as future-plan acceptance.
 Approvals have UTC timestamps and bind to SHA-256 plan hashes. Identical saves

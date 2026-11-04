@@ -2,6 +2,11 @@
 
 All notable changes are documented here. Versions follow Semantic Versioning.
 
+## [0.4.0] — 2026-11-04
+
+- Add `/cc:approve TICKET --plan` and `--implementation` for reviewing and recording one explicitly accepted approval scope at a time, plus standalone `/cc-approve` compatibility.
+- Respect slash/CLI/both preferences for approval guidance while preserving revision-bound approvals and separate worker editing approval.
+
 ## [0.3.0] — 2026-11-04
 
 - **Breaking:** `cc work` now uses the registered clone/current checkout by default, including for existing workspaces with no `worktrees` key. `cc upgrade` preserves `workspace.json` and existing worktree records; it does not infer or migrate the setting. Set `"worktrees": true` in `workspace.json` before upgrading to retain worktree launches and reuse existing ticket worktrees, or pass `--worktree` for one run. `--no-worktree` forces the clone. Existing worktrees are left on disk.
