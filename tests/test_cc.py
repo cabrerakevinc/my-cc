@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
+import urllib.error
 
 CLI = Path(__file__).resolve().parent.parent / "cc"
 
@@ -22,7 +24,7 @@ class PluginPackagingTests(unittest.TestCase):
         self.assertEqual(manifest["name"], "cc")
         self.assertEqual(manifest["version"], entry["version"])
         self.assertEqual((plugin / "scripts/cc").read_bytes(), CLI.read_bytes())
-        expected = {"init", "pickup", "save", "resume", "status", "work", "draft"}
+        expected = {"dashboard", "init", "pickup", "save", "resume", "status", "work", "draft"}
         self.assertEqual({p.name for p in (plugin / "skills").iterdir()}, expected)
         for name in expected:
             text = (plugin / "skills" / name / "SKILL.md").read_text()
@@ -111,6 +113,69 @@ class CommandCenterTests(unittest.TestCase):
         self.run_cc("sync", "PAY-104", "--repo", "payment-service", "--summary", "No code changes yet", "--tests", "Not run")
         self.assertTrue((self.ws / "state/tickets/PAY/PAY-104/work-results/payment-service.json").exists())
         self.assertFalse((repo / "state").exists())
+
+    def test_dashboard_http_lifecycle_filters_and_read_only_details(self):
+        self.create_ticket()
+        self.run_cc("checkpoint", "PAY-104", "--summary", "Investigated retries", "--next", "Review the plan", "--pause")
+        directory = self.ws / "state/tickets/PAY/PAY-104"
+        (directory / "brief.md").write_text('<script>alert("unsafe")</script>')
+        (directory / "work-results").mkdir()
+        (directory / "work-results/payment-service.json").write_text('{"tests":"targeted suite passed"}')
+        before = {p: p.read_bytes() for p in (self.ws / "state").rglob("*") if p.is_file() and not p.name.startswith("index.sqlite")}
+        result = self.run_cc("dashboard", "--background", "--no-browser", "--port", "0")
+        runtime = self.ws / "state/dashboard.json"
+        rec = json.loads(runtime.read_text())
+        base = f'http://127.0.0.1:{rec["port"]}/{rec["token"]}/'
+        self.addCleanup(lambda: self.run_cc("dashboard", "--stop"))
+        def get(path):
+            with urllib.request.urlopen(base + path, timeout=3) as response:
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                return response.read().decode()
+        self.assertIn(base, result.stdout)
+        self.assertIn("No matching tickets", get(""))
+        self.assertIn("PAY-104", get("?state=paused&q=payment"))
+        self.assertIn("No matching tickets", get("?state=all&q=absent"))
+        detail = get("ticket/PAY-104")
+        self.assertIn("/cc:resume PAY-104", detail)
+        self.assertIn("targeted suite passed", detail)
+        self.assertIn("&lt;script&gt;", detail)
+        self.assertNotIn('<script>alert', detail)
+        self.run_cc("checkpoint", "PAY-104", "--summary", "New checkpoint")
+        self.assertIn("New checkpoint", get("ticket/PAY-104"))
+        for path, status in (("../workspace.json", 404), ("ticket/PAY-999", 404)):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                get(path)
+            self.assertEqual(error.exception.code, status)
+        # Documents cannot escape their ticket storage via symlinks.
+        external = self.root / "external.txt"
+        external.write_text("outside workspace")
+        (directory / "brief.md").unlink()
+        (directory / "brief.md").symlink_to(external)
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            get("ticket/PAY-104")
+        self.assertEqual(error.exception.code, 404)
+        (directory / "brief.md").unlink()
+        (directory / "brief.md").write_bytes(before[directory / "brief.md"])
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(urllib.request.Request(base, headers={"Host": "untrusted.example"}), timeout=3)
+        self.assertEqual(error.exception.code, 403)
+        bad = urllib.request.Request(base, headers={"Origin": "https://example.com"})
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(bad, timeout=3)
+        self.assertEqual(error.exception.code, 403)
+        with self.assertRaises(urllib.error.HTTPError):
+            urllib.request.urlopen(base.replace(rec["token"], "wrong"), timeout=3)
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(urllib.request.Request(base, method="POST"), timeout=3)
+        self.assertEqual(error.exception.code, 405)
+        # Repeated launch reuses the same server without replacing its token.
+        self.assertIn("already running", self.run_cc("dashboard", "--no-browser").stdout)
+        self.assertEqual(rec, json.loads(runtime.read_text()))
+        # Browsing leaves authoritative documents unchanged (apart from the explicit checkpoint above).
+        for path, data in before.items():
+            if path.name not in ("ticket.json", "handoff.md"):
+                self.assertEqual(path.read_bytes(), data)
+        self.assertIn("stopped", self.run_cc("dashboard", "--stop").stdout)
 
     def test_two_workspaces_do_not_share_records(self):
         self.create_ticket()

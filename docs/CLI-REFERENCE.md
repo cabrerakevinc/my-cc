@@ -169,3 +169,11 @@ python3 -m unittest discover -s tests -v
 To clean up: remove a workspace folder only after reviewing its state and backing up whatever your company permits. Remove the global skill at `~/.claude/skills/cc-init/` and the installed `cc` binary/symlink if desired. The installer does not install a background daemon.
 
 Marketplace plugin commands use `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft` after installing `cc@my-cc-marketplace`. The `/cc-*` examples above remain valid for standalone workspace skills.
+
+## Local dashboard (v0.1.2+)
+
+Run `python3 .cc/cc dashboard --background` in a workspace initialized with the current engine. It opens the browser and returns a private loopback URL. `--no-browser` suppresses opening, `--port N` selects a port (default 8765, 0 chooses a free port), and `--stop` shuts down this workspace's server. Foreground mode stops with Ctrl+C. Closing a tab leaves the server running.
+
+`/cc:dashboard` uses the updated plugin engine, so it also works in older workspaces without changing their `.cc/cc` snapshot. The skill can launch or stop that server. Each workspace has a separate dashboard; use different ports or `--port 0` to run several.
+
+The overview reads SQLite in read-only mode. Details read the authoritative ticket documents, work orders, and work results as escaped text. Refresh to pick up changes. Browsing does not alter ticket state; the launcher writes only its private runtime metadata at `state/dashboard.json`, which is removed on normal shutdown. The dashboard has no chat, ticket editing, or repository execution.

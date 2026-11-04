@@ -5,6 +5,14 @@ No vendor API calls are made by this program. External CLIs are detected only.
 """
 from __future__ import annotations
 
+import html
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import secrets
+import threading
+import time
+import urllib.parse
+import urllib.request
+import webbrowser
 import argparse
 import datetime as dt
 import json
@@ -19,7 +27,7 @@ import tempfile
 import textwrap
 import uuid
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 PHASES = (
     "discovered", "investigating", "planning", "ready", "implementing",
     "testing", "in-review", "awaiting-deployment", "verifying", "completed", "blocked",
@@ -156,6 +164,11 @@ def skill(name: str, description: str, steps: str, manual: bool = False):
 
 def workspace_skills():
     skills = {
+        "cc-dashboard": skill("cc-dashboard", "Open the local read-only ticket dashboard", """
+            Run `python3 .cc/cc dashboard --background` from the workspace.
+            Report the returned URL. Stop with `python3 .cc/cc dashboard --stop`.
+            If this workspace has an older CLI, use the updated plugin's /cc:dashboard.
+        """, manual=True),
         "cc-pickup": skill("cc-pickup", "Start or investigate a ticket with local, persisted context", """
             Ticket: $ARGUMENTS
             1. Check `cc show <TICKET>`; if missing, retrieve Jira details using the approved TWG CLI after inspecting available `twg --help` commands. Do not invent flags or use unapproved MCP connectors.
@@ -690,6 +703,162 @@ def doctor_cmd(args):
         out("  WARNING: parent CLAUDE.md exists; verify it contains no unrelated business instructions.")
 
 
+DASHBOARD_STYLE = """
+:root{font-family:system-ui,sans-serif;color:#172c32;background:#f2f5f3}*{box-sizing:border-box}
+body{margin:0}header{background:#143d39;color:#fff;padding:32px max(24px,calc((100vw - 1160px)/2))}
+header p{color:#c5dcd4}main{max-width:1160px;margin:28px auto;padding:0 24px}h1{margin:8px 0;font-size:32px}
+a{color:#126658}header a{color:#fff}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px}
+.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}.stat,article{background:white;border:1px solid #d8e2dc;border-radius:12px;padding:22px}.stat{flex:1;min-width:150px}.stat strong{display:block;font-size:28px}
+form{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}input,select,button{font:inherit;padding:10px 14px;border:1px solid #b6cbc0;border-radius:7px;background:white}input{flex:1;min-width:180px}button{cursor:pointer;background:#155c50;color:white}button:focus,a:focus,input:focus,select:focus{outline:3px solid #d99e36;outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}article h2{font-size:19px}article p{line-height:1.6}.badge{font-size:12px;background:#e6eee8;padding:4px 8px;border-radius:20px}.muted{color:#526860}.next{border-top:1px solid #e0e7e2;padding-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.65 ui-monospace,monospace}details{background:white;border:1px solid #d8e2dc;border-radius:10px;margin:14px 0;padding:18px}summary{cursor:pointer;font-weight:600}.empty{padding:40px;border:1px dashed #a5bcb0;border-radius:12px}nav{display:flex;gap:20px;align-items:center;flex-wrap:wrap}footer{margin:30px 0;color:#526860;font-size:13px}
+"""
+
+
+def dashboard_db(root):
+    # Never create, rebuild, or update the index while browsing.
+    return sqlite3.connect((root / "state/index.sqlite").as_uri() + "?mode=ro", uri=True)
+
+
+def dashboard_document(root, token, path, query):
+    esc = lambda value: html.escape(str(value), quote=True)
+    base = f"/{token}/"
+    cfg = workspace_config(root)
+    body = ""
+    if path == "":
+        term = query.get("q", [""])[0][:200]
+        state = query.get("state", ["active"])[0]
+        with dashboard_db(root) as db:
+            db.row_factory = sqlite3.Row
+            counts = db.execute("SELECT COUNT(*), COALESCE(SUM(phase!='completed' AND paused=0),0), COALESCE(SUM(paused),0) FROM tickets").fetchone()
+            sql = "SELECT * FROM tickets WHERE 1=1"
+            params = []
+            if state == "active": sql += " AND paused=0 AND phase!='completed'"
+            elif state == "paused": sql += " AND paused=1"
+            elif state in PHASES:
+                sql += " AND phase=?"; params.append(state)
+            if term:
+                sql += " AND (id LIKE ? OR title LIKE ? OR summary LIKE ? OR next_action LIKE ?)"
+                params += [f"%{term}%"] * 4
+            rows = db.execute(sql + " ORDER BY updated_at DESC", params).fetchall()
+        body += '<div class="stats">' + ''.join(f'<div class="stat"><strong>{value}</strong>{label}</div>' for value, label in zip(counts, ('Total tickets', 'Active', 'Paused'))) + '</div>'
+        options = ''.join(f'<option value="{s}" {"selected" if state == s else ""}>{esc(s.replace("-", " ").title())}</option>' for s in ('active', 'paused', 'all', *PHASES))
+        body += f'<form><input aria-label="Search tickets" name="q" placeholder="Search tickets or next actions" value="{esc(term)}"><select aria-label="Ticket phase" name="state">{options}</select><button>Filter tickets</button></form><div class="grid">'
+        for row in rows:
+            body += f'<article><span class="badge">{esc(row["phase"])}{" · paused" if row["paused"] else ""}</span><h2><a href="{base}ticket/{esc(row["id"])}">{esc(row["id"])} · {esc(row["title"])}</a></h2><p>{esc(row["summary"] or "No summary saved yet.")}</p><p class="next"><b>Next</b> · {esc(row["next_action"] or "Not recorded")}</p><small class="muted">Sprint {esc(row["sprint"] or "—")} · {esc(row["updated_at"])}</small></article>'
+        body += '</div>'
+        if not rows: body += '<p class="empty">No matching tickets. Pick up a ticket in Claude Code, or change your filters.</p>'
+    elif path.startswith("ticket/"):
+        tid = path.removeprefix("ticket/")
+        if not TICKET_RE.fullmatch(tid): raise FileNotFoundError()
+        directory = root / 'state/tickets' / tid.split('-')[0] / tid
+        def read_safe(file):
+            if not file.resolve().is_relative_to((root / 'state/tickets').resolve()): raise FileNotFoundError()
+            return file.read_text(encoding='utf-8')
+        ticket = json.loads(read_safe(directory / 'ticket.json'))
+        body = f'<p><a href="{base}">← All tickets</a></p><h1>{esc(tid)} · {esc(ticket["title"])}</h1><p>{esc(ticket["phase"])} · {"Paused" if ticket["paused"] else "Active"}</p><p>Plan approved: {esc(ticket.get("approved_plan", False))} · Implementation authorized: {esc(ticket.get("implementation_approved", False))}</p><p><b>Next:</b> {esc(ticket.get("next_action", ""))}</p><article><label for="resume">Resume in Claude Code</label><p><input id="resume" readonly value="/cc:resume {esc(tid)}"> <button id="copy">Copy resume command</button><span id="copied" role="status"></span></p></article>'
+        for name in ('brief.md', 'plan.md', 'decisions.md', 'handoff.md'):
+            file = directory / name
+            content = read_safe(file) if file.exists() else 'No saved document yet.'
+            body += f'<details open><summary>{esc(name)}</summary><pre>{esc(content)}</pre></details>'
+        for folder in ('work-orders', 'work-results'):
+            for file in sorted((directory / folder).glob('*')):
+                if file.suffix not in ('.md', '.json') or not file.is_file(): continue
+                body += f'<details><summary>{esc(folder + "/" + file.name)}</summary><pre>{esc(read_safe(file))}</pre></details>'
+    else: raise FileNotFoundError()
+    script = "document.getElementById('copy')?.addEventListener('click',async()=>{const i=document.getElementById('resume');try{await navigator.clipboard.writeText(i.value);document.getElementById('copied').textContent=' Copied';}catch(e){i.select();document.getElementById('copied').textContent=' Select and copy the command';}});"
+    return f'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(cfg["name"])} · CC dashboard</title><style>{DASHBOARD_STYLE}</style><header><span class="eyebrow">CC / Workspace overview</span><h1>{esc(cfg["name"])}</h1><p>Your tickets, decisions, and next steps.</p><nav><a href="{base}">Tickets</a><a href="">Refresh</a><span>Read-only · local workspace</span></nav></header><main>{body}<footer>Saved state only. Refresh for updates. Continue implementation in Claude Code.</footer></main><script>{script}</script></html>'
+
+
+def dashboard_server(root, port, token):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass  # Do not log token URLs or ticket data.
+        def respond(self, status, content, kind='text/plain; charset=utf-8'):
+            data = content.encode()
+            self.send_response(status)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+            self.end_headers()
+            self.wfile.write(data)
+        def authorized(self):
+            expected = f'127.0.0.1:{self.server.server_port}'
+            return self.headers.get('Host') == expected and self.path.startswith(f'/{token}/') and self.headers.get('Origin', f'http://{expected}') == f'http://{expected}'
+        def do_GET(self):
+            if not self.authorized(): return self.respond(403, 'Forbidden')
+            parsed = urllib.parse.urlsplit(self.path)
+            path = parsed.path[len(token)+2:]
+            if path == 'health': return self.respond(200, str(root))
+            try:
+                page = dashboard_document(root, token, path, urllib.parse.parse_qs(parsed.query))
+                self.respond(200, page, 'text/html; charset=utf-8')
+            except (FileNotFoundError, ValueError, KeyError): self.respond(404, 'Ticket not found')
+            except (OSError, sqlite3.Error): self.respond(503, 'Cannot read workspace. Check its files and run rebuild-index from the CLI if needed.')
+        def do_POST(self):
+            if not self.authorized(): return self.respond(403, 'Forbidden')
+            if self.path != f'/{token}/stop': return self.respond(405, 'Read-only dashboard')
+            self.respond(200, 'Dashboard stopped')
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+    return ThreadingHTTPServer(('127.0.0.1', port), Handler)
+
+
+def dashboard_cmd(args):
+    root = workspace_root(args)
+    if not 0 <= args.port <= 65535: fail('Port must be between 0 and 65535.')
+    runtime = root / 'state/dashboard.json'
+    running = None
+    if runtime.exists():
+        try:
+            rec = json.loads(runtime.read_text())
+            url = f'http://127.0.0.1:{int(rec["port"])}/{rec["token"]}/'
+            with urllib.request.urlopen(url + 'health', timeout=1) as response:
+                if response.read().decode() == str(root): running = url
+        except (OSError, ValueError, KeyError): pass
+    if args.stop:
+        if running:
+            urllib.request.urlopen(urllib.request.Request(running + 'stop', method='POST'), timeout=3).close()
+            out('Dashboard stopped.')
+        else: out('No running dashboard for this workspace.')
+        return
+    if running:
+        out(f'Dashboard already running: {running}')
+        if not args.no_browser: webbrowser.open(running)
+        return
+    if args.background:
+        command = [sys.executable, str(Path(__file__).resolve()), '--workspace', str(root), 'dashboard', '--port', str(args.port), '--no-browser']
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        for _ in range(50):
+            time.sleep(.1)
+            if process.poll() is not None: fail('Dashboard could not start. Try foreground mode to see the error.')
+            if runtime.exists():
+                try:
+                    rec = json.loads(runtime.read_text())
+                    url = f'http://127.0.0.1:{int(rec["port"])}/{rec["token"]}/'
+                    with urllib.request.urlopen(url + 'health', timeout=.2) as response:
+                        if response.read().decode() != str(root): continue
+                    out(f'Dashboard: {url}')
+                    if not args.no_browser: webbrowser.open(url)
+                    return
+                except (OSError, ValueError, KeyError): pass
+        process.terminate()
+        process.wait(timeout=3)
+        fail('Dashboard startup timed out. Try foreground mode.')
+    token = secrets.token_urlsafe(24)
+    try: server = dashboard_server(root, args.port, token)
+    except OSError as exc: fail(f'Cannot start dashboard: {exc}. Try --port 0 for a free port.')
+    url = f'http://127.0.0.1:{server.server_port}/{token}/'
+    json_write(runtime, {'port': server.server_port, 'token': token})
+    print(f'Dashboard: {url}\nStop with Ctrl+C or dashboard --stop.', flush=True)
+    if not args.no_browser: webbrowser.open(url)
+    try: server.serve_forever()
+    except KeyboardInterrupt: pass
+    finally:
+        server.server_close()
+        if runtime.exists() and json.loads(runtime.read_text()).get('token') == token: runtime.unlink()
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="cc", description="Local AI command center starter (no vendor credentials or background services)")
     p.add_argument("--workspace", help="Workspace directory (or use CC_WORKSPACE)")
@@ -796,6 +965,14 @@ def build_parser():
     s.add_argument("--summary")
     s.add_argument("--tests")
     s.set_defaults(func=sync_cmd)
+
+    s = sub.add_parser("dashboard", help="Open the local read-only ticket dashboard")
+    s.add_argument("--port", type=int, default=8765, help="Loopback port; 0 selects a free port")
+    s.add_argument("--no-browser", action="store_true")
+    group = s.add_mutually_exclusive_group()
+    group.add_argument("--background", action="store_true", help="Run independently of this terminal")
+    group.add_argument("--stop", action="store_true", help="Stop this workspace's running dashboard")
+    s.set_defaults(func=dashboard_cmd)
 
     s = sub.add_parser("doctor", help="Check local tools and workspace")
     s.set_defaults(func=doctor_cmd)

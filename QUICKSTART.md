@@ -37,3 +37,7 @@ After initialization, use `python3 .cc/cc` for local CLI operations and keep nor
 ## Push and release (from your Mac)
 
 See [docs/RELEASING.md](docs/RELEASING.md). An SSH or HTTPS Git credential on your Mac is required. Publishing has **not** been done by packaging the ZIP.
+
+## View your tickets
+
+After updating or installing `cc@my-cc-marketplace`, run `/cc:dashboard` in Claude Code from your initialized workspace. It opens a local read-only dashboard; refresh to see saved changes. Ask the skill to stop the server when finished. See the [dashboard guide](README.md#open-your-dashboard) for terminal commands and existing-workspace compatibility.

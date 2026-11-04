@@ -2,15 +2,15 @@
 
 ## Versioning
 
-Use Semantic Versioning: Git tag `v0.1.1` corresponds to plugin manifest `version: 0.1.1` and the marketplace entry version. Do not reuse a published tag.
+Use Semantic Versioning: Git tag `v0.1.2` corresponds to plugin manifest `version: 0.1.2` and the marketplace entry version. Do not reuse a published tag.
 
 ## Check publication first
 
-v0.1.0 was published on 2026-11-04. The namespace rename is prepared as v0.1.1; leave the existing v0.1.0 tag and release untouched. Before creating any new tag or release, check both:
+v0.1.0 was published on 2026-11-04. The local dashboard is prepared as v0.1.2; leave the existing v0.1.0 tag and release untouched. Before creating any new tag or release, check both:
 
 ```bash
-git ls-remote --tags origin 'refs/tags/v0.1.1*'
-gh release view v0.1.1 --repo cabrerakevinc/my-cc
+git ls-remote --tags origin 'refs/tags/v0.1.2*'
+gh release view v0.1.2 --repo cabrerakevinc/my-cc
 ```
 
 If either exists, inspect it and choose a new version rather than replacing it. Authentication or network errors do not establish that a release is absent.
@@ -36,10 +36,10 @@ Use the existing repository and history. Review and stage only the intended rele
 git diff --check
 git diff --cached --check
 git diff --cached --stat
-git commit -m "feat: rename Claude Code plugin namespace to cc"
+git commit -m "feat: add local read-only ticket dashboard"
 git push origin HEAD
-git tag -a v0.1.1 -m "CC v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "CC v0.1.2"
+git push origin v0.1.2
 ```
 
 Never force-push or replace an existing published tag. Repeat the publication checks immediately before tagging.
@@ -49,18 +49,18 @@ Never force-push or replace an existing published tag. Repeat the publication ch
 With GitHub CLI authenticated (`gh auth status`):
 
 ```bash
-gh release create v0.1.1 --repo cabrerakevinc/my-cc \
-  --title "CC v0.1.1 — Plugin namespace update" \
-  --notes-file docs/releases/v0.1.1.md
+gh release create v0.1.2 --repo cabrerakevinc/my-cc \
+  --title "CC v0.1.2 — Local ticket dashboard" \
+  --notes-file docs/releases/v0.1.2.md
 ```
 
-Alternatively use GitHub web UI: Releases → Draft a new release → Select tag `v0.1.1` → paste `docs/releases/v0.1.1.md` → Publish release.
+Alternatively use GitHub web UI: Releases → Draft a new release → Select tag `v0.1.2` → paste `docs/releases/v0.1.2.md` → Publish release.
 
 ## Verify
 
 ```bash
-git ls-remote --tags origin v0.1.1
-gh release view v0.1.1 --repo cabrerakevinc/my-cc
+git ls-remote --tags origin v0.1.2
+gh release view v0.1.2 --repo cabrerakevinc/my-cc
 claude plugin marketplace add cabrerakevinc/my-cc
 claude plugin install cc@my-cc-marketplace
 ```

@@ -2,7 +2,7 @@
 
 **Engineering-first, local-first command centers for Claude Code.** Save Jira ticket plans and decisions, pause for days or weeks, resume from durable checkpoints, and launch coding sessions inside the correct repository/worktree so repository-specific instructions remain relevant.
 
-**Version:** `0.1.1` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
+**Version:** `0.1.2` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
 
 > This project is an independent Claude Code plugin and local Python utility. It is not affiliated with Anthropic, Atlassian, or AWS.
 
@@ -45,11 +45,34 @@ python3 .cc/cc checkpoint PAY-104 --summary 'Investigated' --next 'Plan and revi
 python3 .cc/cc resume PAY-104
 ```
 
-Plugin commands are `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
+Plugin commands are `/cc:dashboard`, `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
 
 To migrate an existing plugin installation, uninstall `my-cc@my-cc-marketplace`, update the marketplace, install `cc@my-cc-marketplace`, and restart Claude Code. Existing workspace files and ticket state remain usable.
 
 The independent workspace also has non-namespaced local `/cc-*` skills, plus the plugin's `/cc:*` skills. You can continue using native Claude Code `/plan` and `/code-review` unchanged.
+
+## Open your dashboard
+
+Inside Claude Code in your command-center workspace, run:
+
+```text
+/cc:dashboard
+```
+
+This opens a local, read-only browser dashboard with active and paused tickets, search and phase filters, saved plans, decisions, handoffs, repository work orders, and reported test results. Each ticket has a **Copy resume command** button to continue in Claude Code. Refresh the page to see newly saved checkpoints.
+
+For workspaces initialized with v0.1.2 or later, you can also launch from a terminal:
+
+```bash
+python3 .cc/cc dashboard --background
+python3 .cc/cc dashboard --stop
+```
+
+Without `--background`, the server runs in the foreground; use Ctrl+C to stop it. Closing the browser tab does not stop the server. Repeating the launch command reuses the running server for that workspace. Add `--no-browser` to print the URL without opening a tab, or `--port 0` to choose a free port if 8765 is busy.
+
+**Existing workspaces:** updating the plugin does not replace your workspace's `.cc/cc` snapshot. Use `/cc:dashboard` after updating the plugin; it uses the new bundled engine directly and keeps your existing ticket files. Use that skill to stop the dashboard too. The terminal examples above require the new engine.
+
+The dashboard reads `state/index.sqlite` for the overview and ticket files for details. It cannot edit tickets, run code, or update Jira. No AI service, extra Python package, or database server is needed. It serves only the current workspace on `127.0.0.1`, with a private access token in its URL. Keep that URL private. If the index is stale, run `python3 .cc/cc rebuild-index` from your workspace.
 
 ## A ticket from pickup to delivery
 
@@ -214,7 +237,7 @@ Use the same plugin to create `~/work/bbc/command-center`, `~/work/bevz/command-
 - Python 3.10+ and Git required. Claude Code required for interactive coding; Python CLI uses standard library only.
 - Plugin installation does not modify user shell configuration. Optional `./install.sh` installs a global `cc` CLI and unprefixed global `/cc-init`, but is **not necessary** for the marketplace plugin.
 
-Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.1.1](docs/releases/v0.1.1.md).
+Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.1.2](docs/releases/v0.1.2.md).
 
 ## Development and validation
 
