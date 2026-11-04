@@ -1,6 +1,9 @@
 import json
 import hashlib
 import os
+import re
+import runpy
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -213,6 +216,193 @@ Ticket: $ARGUMENTS
 
     def ticket_files(self):
         return self.ws / "state/tickets/PAY/PAY-104"
+
+    def guidance_config(self, display="both", enabled=True, maximum=2):
+        (self.ws / "workspace.yaml").write_text(
+            f"workflow:\n  next_steps:\n    enabled: {str(enabled).lower()}\n"
+            f"    display: {display}\n    max_suggestions: {maximum}\n")
+
+    def guidance(self, *args):
+        return self.run_cc("next-steps", "PAY-104", *args).stdout
+
+    def save_guidance_plan(self):
+        plan = self.root / "native.md"
+        plan.write_text("# Full plan\nImplement the fix and run targeted tests.\n")
+        self.run_cc("plan", "PAY-104", "--file", str(plan))
+
+    def test_guidance_defaults_native_plan_and_manual_save(self):
+        self.assertIn("max_suggestions: 2", (self.ws / "workspace.yaml").read_text())
+        created = self.run_cc("pickup", "PAY-104", "--title", "Payment fix").stdout
+        self.assertIn("Workflow: PAY-104 · discovered", created)
+        self.assertIn("/plan Prepare", created)
+        text = self.guidance()
+        self.assertIn("same Claude Code session", text)
+        self.assertIn("/cc:save PAY-104", text)
+        self.assertNotIn("Terminal:", text)  # No native planner/save CLI equivalent.
+        self.assertNotIn("/cc:plan", text)
+        before = self.workspace_snapshot()
+        finalized = self.guidance("--plan-finalized")
+        self.assertIn("Next: Save the finalized native plan", finalized)
+        self.assertNotIn("/plan Prepare", finalized)
+        self.assertEqual(before, self.workspace_snapshot())
+        (self.ws / "workspace.yaml").unlink()  # Existing workspaces get defaults.
+        self.assertEqual(text, self.guidance())
+
+    def test_guidance_formats_fallbacks_and_maximum(self):
+        self.create_ticket()
+        self.run_cc("checkpoint", "PAY-104", "--pause")
+        for display in ("slash", "cli", "both"):
+            with self.subTest(display=display):
+                self.guidance_config(display)
+                text = self.guidance()
+                self.assertEqual("Claude Code:" in text, display != "cli")
+                self.assertEqual("Terminal:" in text, display != "slash")
+                self.assertIn("PAY-104", text)
+        self.run_cc("checkpoint", "PAY-104", "--unpause")
+        self.guidance_config("cli", maximum=1)
+        text = self.guidance()
+        self.assertIn("Claude Code:", text)  # Native /plan has no CLI equivalent.
+        self.assertNotIn("Optional:", text)
+        self.save_guidance_plan()
+        self.guidance_config("slash")
+        text = self.guidance()
+        self.assertIn("Terminal:", text)  # Approval has no slash equivalent.
+        self.assertIn("approve PAY-104 --plan", text)
+        self.assertNotIn("/cc:approve", text)
+        self.assertIn("/cc-status", self.run_cc("next-steps", "--surface", "standalone").stdout)
+
+    def test_guidance_disabled_and_invalid_configuration(self):
+        self.create_ticket()
+        self.guidance_config(enabled=False)
+        self.assertEqual(self.guidance(), "")
+        self.assertEqual(self.run_cc("next-steps").stdout, "")
+        self.assertNotIn("Workflow:", self.run_cc("resume", "PAY-104").stdout)
+        for key, value in (("display", "unknown"), ("enabled", "yes"),
+                           ("max_suggestions", "0"), ("max_suggestions", "-1"),
+                           ("max_suggestions", "1.5"), ("unknown", "true")):
+            with self.subTest(key=key, value=value):
+                (self.ws / "workspace.yaml").write_text(f"workflow:\n  next_steps:\n    {key}: {value}\n")
+                cp = self.run_cc("next-steps", "PAY-104", success=False)
+                self.assertEqual(cp.returncode, 2)
+                self.assertIn("workspace.yaml", cp.stderr)
+        cp = self.run_cc("checkpoint", "PAY-104", "--summary", "Still saved")
+        self.assertIn("guidance unavailable", cp.stderr)
+        self.assertEqual(json.loads((self.ticket_files() / "ticket.json").read_text())["summary"], "Still saved")
+
+    def test_guidance_json_config_and_per_key_precedence(self):
+        self.create_ticket()
+        self.run_cc("checkpoint", "PAY-104", "--pause")
+        path = self.ws / "workspace.json"
+        workspace = json.loads(path.read_text())
+        workspace["workflow"] = {"next_steps": {"display": "cli"}}
+        path.write_text(json.dumps(workspace))
+        self.guidance_config("slash", maximum=1)
+        before = self.workspace_snapshot()
+        text = self.guidance()
+        self.assertIn("Terminal:", text)
+        self.assertNotIn("Claude Code:", text)
+        engine = runpy.run_path(str(CLI))
+        self.assertEqual(engine["next_steps_config"](self.ws),
+                         {"enabled": True, "display": "cli", "max_suggestions": 1})
+        self.assertEqual(before, self.workspace_snapshot())
+        (self.ws / "workspace.yaml").unlink()
+        for display in ("slash", "cli", "both"):
+            with self.subTest(display=display):
+                workspace["workflow"]["next_steps"] = {"display": display, "max_suggestions": 1}
+                path.write_text(json.dumps(workspace))
+                text = self.guidance()
+                self.assertEqual("Claude Code:" in text, display != "cli")
+                self.assertEqual("Terminal:" in text, display != "slash")
+        workspace["workflow"]["next_steps"]["enabled"] = False
+        path.write_text(json.dumps(workspace))
+        self.assertEqual(self.guidance(), "")
+        self.assertNotIn("Workflow:", self.run_cc("resume", "PAY-104").stdout)
+        self.guidance_config(enabled=True)
+        self.assertEqual(self.guidance(), "")  # JSON disable overrides YAML defaults.
+
+    def test_guidance_json_validates_types_and_structure(self):
+        self.create_ticket()
+        path = self.ws / "workspace.json"
+        workspace = json.loads(path.read_text())
+        invalid = [None, [], {"next_steps": None}, {"next_steps": []}]
+        invalid += [{"next_steps": {key: value}} for key, value in (
+            ("enabled", "false"), ("enabled", 0), ("display", "unknown"),
+            ("display", []), ("max_suggestions", True), ("max_suggestions", 0),
+            ("max_suggestions", "2"), ("unknown", True))]
+        for workflow in invalid:
+            with self.subTest(workflow=workflow):
+                workspace["workflow"] = workflow
+                path.write_text(json.dumps(workspace))
+                cp = self.run_cc("next-steps", "PAY-104", success=False)
+                self.assertEqual(cp.returncode, 2)
+                self.assertIn("workspace.json", cp.stderr)
+
+    def test_guidance_approval_gates_and_content_changes(self):
+        self.create_ticket()
+        self.save_guidance_plan()
+        text = self.guidance()
+        self.assertIn("approve PAY-104 --plan", text)
+        self.assertNotIn("/cc:work", text)
+        self.run_cc("approve", "PAY-104", "--plan")
+        text = self.guidance()
+        self.assertIn("approve PAY-104 --implementation", text)
+        self.assertNotIn("/cc:work", text)
+        self.run_cc("approve", "PAY-104", "--implementation")
+        before = self.workspace_snapshot()
+        text = self.guidance()
+        self.assertIn("/cc:work PAY-104", text)
+        self.assertNotIn("--repo", text)  # No guessed repository.
+        self.assertEqual(before, self.workspace_snapshot())
+        path = self.ticket_files() / "ticket.json"
+        ticket = json.loads(path.read_text())
+        ticket["repos"] = {"payment-service": {}}
+        path.write_text(json.dumps(ticket))
+        text = self.guidance()
+        self.assertIn("work PAY-104 --repo payment-service", text)
+        # Every rendered terminal example parses against the real CLI.
+        engine = runpy.run_path(str(CLI))
+        for command in re.findall(r"Terminal: `([^`]+)`", text):
+            parsed = engine["build_parser"]().parse_args(shlex.split(command)[2:])
+            self.assertEqual(parsed.ticket, "PAY-104")
+        (self.ticket_files() / "plan.md").write_text("# Changed plan\nFresh scope\n")
+        before = self.workspace_snapshot()
+        self.assertIn("approve PAY-104 --plan", self.guidance())
+        self.assertEqual(before, self.workspace_snapshot())
+
+    def test_guidance_blocked_paused_completed_and_delivery_phases(self):
+        self.create_ticket()
+        self.save_guidance_plan()
+        self.run_cc("approve", "PAY-104", "--plan")
+        self.run_cc("approve", "PAY-104", "--implementation")
+        checks = {"blocked": "Resolve the recorded blockers", "completed": "is completed",
+                  "implementing": "implementation progress", "testing": "test evidence",
+                  "in-review": "review feedback", "awaiting-deployment": "deployment authorization",
+                  "verifying": "Verify deployment evidence"}
+        for phase, expected in checks.items():
+            with self.subTest(phase=phase):
+                self.run_cc("phase", "PAY-104", phase)
+                text = self.guidance("--plan-finalized") if phase in ("blocked", "completed") else self.guidance()
+                self.assertIn(expected, text)
+                self.assertIn(f"Workflow: PAY-104 · {phase}", text)
+                self.assertNotIn("/cc:work", text)
+        self.run_cc("checkpoint", "PAY-104", "--pause")
+        self.assertIn("is paused", self.guidance("--plan-finalized"))
+        self.assertIn("/cc-resume PAY-104", self.guidance("--surface", "standalone"))
+        path = self.ticket_files() / "ticket.json"
+        ticket = json.loads(path.read_text())
+        ticket["blockers"] = ["Await security decision"]
+        path.write_text(json.dumps(ticket))
+        self.assertIn("Resolve the recorded blockers", self.guidance())
+        ticket["phase"] = "blocked"
+        path.write_text(json.dumps(ticket))
+        (self.ticket_files() / "plan.md").write_text("# Direct edit\nNeeds reapproval\n")
+        self.assertIn("Resolve the recorded blockers", self.guidance())
+
+    def test_all_skills_query_guidance(self):
+        for path in (CLI.parent / "plugins/cc/skills").glob("*/SKILL.md"):
+            self.assertIn("next-steps <TICKET>", path.read_text(), str(path))
+        for path in (self.ws / ".claude/skills").glob("*/SKILL.md"):
+            self.assertIn("next-steps <TICKET> --surface standalone", path.read_text(), str(path))
 
     def test_full_native_plan_persistence_and_fresh_resume(self):
         self.create_ticket()

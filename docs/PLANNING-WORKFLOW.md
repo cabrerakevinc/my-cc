@@ -45,7 +45,18 @@ or ticket mapping was found in the installed CLI help or reviewed public CLI
 reference. This is a verification boundary, not a promise about private internals.
 My CC does not parse session JSONL, guess filenames, or choose the newest plan.
 It asks for the exact path or complete content when the conversation cannot
-identify the file. Hooks could expose additional context, but are out of scope.
+identify the file.
+
+Rechecked public documentation on 2026-11-04:
+[ExitPlanMode hook inputs](https://code.claude.com/docs/en/hooks#exitplanmode)
+can expose `plan` and `planFilePath` before the approval prompt; PostToolUse can
+expose the approved plan. This is a supported integration point, but it does not
+give the current hook-free My CC CLI automatic knowledge that a plan was finalized
+for a ticket. No hook or session watcher is installed by this feature. Skills use
+conversation context to query `next-steps TICKET --plan-finalized` when appropriate;
+otherwise the guidance includes a manual `/cc:save TICKET` fallback after `/plan`.
+The hint never records acceptance or permission to implement. See
+[next-step guidance](NEXT-STEPS.md).
 
 ## Day 1: investigate, plan, accept for later, save
 
@@ -183,5 +194,5 @@ neither reload command replaces the workspace's `.cc/cc` engine snapshot.
 
 This solution adds no `/cc:plan` Skill, agents, background services, hooks, or
 automatic checkpointing. The existing CLI `plan --file` only imports a file;
-native Claude Code remains responsible for planning. No release or version bump
-is part of this change.
+native Claude Code remains responsible for planning. These capabilities are
+included in v0.2.0; see the [release notes](releases/v0.2.0.md).

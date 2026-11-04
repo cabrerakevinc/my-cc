@@ -2,6 +2,14 @@
 
 All notable changes are documented here. Versions follow Semantic Versioning.
 
+## [0.2.0] — 2026-11-04
+
+- Add deterministic, read-only `next-steps` guidance after ticket commands and Skills.
+- Configure guidance in `workspace.yaml` or `workspace.json`: enabled, preferred command formats, and maximum suggestions; explicit JSON values override YAML per setting.
+- Preserve native `/plan`, manual save fallback, approval gates, and paused/blocked states.
+- Add guidance tests and configuration documentation.
+- Preserve complete native plans with content-bound approvals and safe workspace compatibility upgrades.
+
 ## [0.1.2] — 2026-11-04
 
 - Add `/cc:dashboard`, workspace `/cc-dashboard`, and the `dashboard` CLI command.

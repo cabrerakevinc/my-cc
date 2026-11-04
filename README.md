@@ -2,7 +2,7 @@
 
 **Engineering-first, local-first command centers for Claude Code.** Save Jira ticket plans and decisions, pause for days or weeks, resume from durable checkpoints, and launch coding sessions inside the correct repository/worktree so repository-specific instructions remain relevant.
 
-**Version:** `0.1.2` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
+**Version:** `0.2.0` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
 
 > This project is an independent Claude Code plugin and local Python utility. It is not affiliated with Anthropic, Atlassian, or AWS.
 
@@ -135,6 +135,13 @@ flowchart TD
 ```
 
 Checkpoint whenever you stop, get blocked, or switch tickets. Resume restores the saved context; you choose the appropriate next step after checking what changed. The loop through planning represents that review, not a requirement to rewrite an unchanged plan.
+
+My CC now displays contextual next steps after ticket commands and Skills. Configure
+`workflow.next_steps` in workspace-level `workspace.yaml` or `workspace.json` to enable guidance, prefer
+`slash`, `cli`, or `both` formats, and limit suggestions (defaults: `true`, `both`,
+`2`). Explicit JSON values override YAML per setting. Existing workspace settings and ticket storage stay unchanged. See
+[next-step guidance](docs/NEXT-STEPS.md) for configuration, examples, and the manual
+native `/plan` → `/cc:save` handoff.
 
 ### 1. Pick up and understand the ticket
 
@@ -282,7 +289,7 @@ Use the same plugin to create `~/work/bbc/command-center`, `~/work/bevz/command-
 - Python 3.10+ and Git required. Claude Code required for interactive coding; Python CLI uses standard library only.
 - Plugin installation does not modify user shell configuration. Optional `./install.sh` installs a global `cc` CLI and unprefixed global `/cc-init`, but is **not necessary** for the marketplace plugin.
 
-Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.1.2](docs/releases/v0.1.2.md).
+Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.2.0](docs/releases/v0.2.0.md).
 
 ## Development and validation
 

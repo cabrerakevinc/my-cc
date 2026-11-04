@@ -9,6 +9,7 @@ import html
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import secrets
+import shlex
 import threading
 import time
 import urllib.parse
@@ -28,7 +29,7 @@ import tempfile
 import textwrap
 import uuid
 
-VERSION = "0.1.2"
+VERSION = "0.2.0"
 PHASES = (
     "discovered", "investigating", "planning", "ready", "implementing",
     "testing", "in-review", "awaiting-deployment", "verifying", "completed", "blocked",
@@ -41,6 +42,7 @@ NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$")
 # Unknown or customized files are never treated as generated merely by name.
 LEGACY_MANAGED_HASHES = {
     ".cc/cc": [
+        "85194d8b1551922ecc618aa85f500402c64dda29499db159c71b673872af0f25",
         "01757a4ae395725e92ccfc28fc0e112916caeceb2842e1e9c891892303ab72a6",
         "02368339124a796651af17fe189263fbe08f6e5f2a93e7898e314371d097f6c1",
         "562a12b77c070adcd50ab541b91026369f7392c814021cc62cd6ae379bd56053",
@@ -70,6 +72,9 @@ LEGACY_MANAGED_HASHES = {
     ".claude/skills/cc-work/SKILL.md": [
         "8d3f3f0fbe7b6045d47f71a922f3d1c304ab62e42e46c76e8919e77886336ffd",
         "db737268b68dafac9e2d7cf7dbbc0138ff339abd92e18f102e640a81533b813f"
+    ],
+    ".claude/skills/cc-upgrade/SKILL.md": [
+        "8555390cb4d4f474b46af2c00c862e82355551e34cb6c929b2b57805b31b7b87"
     ]
 }
 
@@ -139,6 +144,169 @@ def workspace_root(args=None) -> Path:
 
 def workspace_config(root: Path):
     return json_read(root / "workspace.json")
+
+
+NEXT_STEPS_YAML = "workflow:\n  next_steps:\n    enabled: true\n    display: both\n    max_suggestions: 2\n"
+
+
+def next_steps_config(root):
+    """Merge defaults, YAML, then explicit JSON settings (per key)."""
+    config = yaml_next_steps_config(root)
+    workspace = workspace_config(root)
+    workflow = workspace.get("workflow", {})
+    if not isinstance(workflow, dict):
+        fail("workspace.json: workflow must be an object")
+    settings = workflow.get("next_steps", {})
+    if not isinstance(settings, dict):
+        fail("workspace.json: workflow.next_steps must be an object")
+    for key, value in settings.items():
+        valid = (
+            (key == "enabled" and type(value) is bool)
+            or (key == "display" and isinstance(value, str) and value in ("slash", "cli", "both"))
+            or (key == "max_suggestions" and type(value) is int and value > 0)
+        )
+        if not valid:
+            fail(f"workspace.json: invalid next_steps.{key}: {value}")
+        config[key] = value
+    return config
+
+
+def yaml_next_steps_config(root):
+    """Read the guidance block only; retain the dependency-free engine.
+
+    This deliberately supports block mappings and scalar values, not general
+    YAML constructs (anchors, tags, flow mappings or multiline values).
+    Other workspace sections are ignored, never evaluated.
+    """
+    config = {"enabled": True, "display": "both", "max_suggestions": 2}
+    path = root / "workspace.yaml"
+    if not path.exists():
+        return config
+    stack = []
+    seen = set()
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip() or line.strip() in ("---", "..."):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        match = re.fullmatch(r" *([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*?)", line)
+        parents = [key for _, key in stack]
+        relevant = parents[:2] == ["workflow", "next_steps"]
+        if not match:
+            if relevant or line.lstrip().startswith(("workflow:", "next_steps:")):
+                fail(f"workspace.yaml:{number}: use block mappings for workflow.next_steps")
+            continue
+        key, value = match.groups()
+        keys = parents + [key]
+        if keys in (["workflow"], ["workflow", "next_steps"]):
+            if value:
+                fail(f"workspace.yaml:{number}: use a block mapping for {'.'.join(keys)}")
+        if relevant:
+            if len(parents) != 2 or key not in config or key in seen:
+                fail(f"workspace.yaml:{number}: unknown or duplicate next_steps setting: {key}")
+            seen.add(key)
+            value = value.strip("\"'")
+            if key == "enabled" and value.lower() in ("true", "false"):
+                config[key] = value.lower() == "true"
+            elif key == "display" and value in ("slash", "cli", "both"):
+                config[key] = value
+            elif key == "max_suggestions" and value.isdigit() and int(value) > 0:
+                config[key] = int(value)
+            else:
+                fail(f"workspace.yaml:{number}: invalid next_steps.{key}: {value}")
+        if not value:
+            stack.append((indent, key))
+    return config
+
+
+def recommend_next_steps(ticket, has_plan, plan_finalized=False, standalone=False):
+    """Deterministic actions from effective ticket state; never execute them."""
+    tid = ticket["id"]
+    prefix = "/cc-" if standalone else "/cc:"
+
+    def action(text, slash=None, cli=None):
+        return {"text": text, "slash": slash, "cli": cli}
+
+    resume = action(f"Review the saved handoff for {tid}", f"{prefix}resume {tid}", f"resume {tid}")
+    phase = ticket["phase"]
+    if phase == "blocked" or ticket.get("blockers"):
+        return [action(f"Resolve the recorded blockers for {tid} before continuing; review the handoff",
+                       resume["slash"], resume["cli"])]
+    if phase == "completed":
+        return [action(f"{tid} is completed; review its saved outcome if needed", resume["slash"], resume["cli"])]
+    if ticket.get("paused"):
+        return [action(f"{tid} is paused; review the handoff before deciding to continue", resume["slash"], resume["cli"])]
+    save = action(f"When the native plan for {tid} is finalized, save its exact path or full content manually",
+                  f"{prefix}save {tid}")
+    if plan_finalized:
+        save["text"] = f"Save the finalized native plan for {tid} using its exact path or full content"
+        return [save]
+    if not has_plan:
+        return [action(f"Plan {tid} in this same Claude Code session",
+                       f"/plan Prepare the implementation and test plan for {tid}"), save]
+    if not ticket.get("approved_plan"):
+        return [action(f"Review the saved plan for {tid}; record approval only after explicit acceptance",
+                       cli=f"approve {tid} --plan")]
+    if not ticket.get("implementation_approved"):
+        return [action(f"Request explicit implementation/launch authorization for {tid}; record it only when granted",
+                       cli=f"approve {tid} --implementation")]
+    if phase in ("discovered", "investigating", "planning", "ready"):
+        # Repository selection belongs to the existing work Skill. Render a
+        # terminal form only when one repository is already recorded for this ticket.
+        repos = list(ticket.get("repos", {}))
+        cli = f"work {tid} --repo {shlex.quote(repos[0])}" if len(repos) == 1 else None
+        return [action(f"Confirm the repository and prepare the separate-terminal worker for {tid}; native approval is still required before edits",
+                       f"{prefix}work {tid}", cli)]
+    followup = {
+        "implementing": "Review implementation progress and record test evidence",
+        "testing": "Review test evidence before preparing review",
+        "in-review": "Check review feedback and PR status through approved tools",
+        "awaiting-deployment": "Confirm deployment authorization and readiness through the repository workflow",
+        "verifying": "Verify deployment evidence and acceptance criteria before marking complete",
+    }.get(phase, "Review the saved handoff and recorded next action")
+    return [action(f"{followup} for {tid}; start with the saved handoff", resume["slash"], resume["cli"])]
+
+
+def next_steps_cmd(args):
+    root = workspace_root(args)
+    config = next_steps_config(root)
+    if not config["enabled"]:
+        return
+    standalone = getattr(args, "surface", "plugin") == "standalone"
+    tid = getattr(args, "ticket", None)
+    if tid:
+        # Preserve blocker/completion priority even if approval validation would
+        # otherwise downgrade the effective phase after a direct plan edit.
+        ticket = json_read(ticket_dir(root, tid) / "ticket.json")
+        saved_phase = ticket["phase"]
+        validate_plan_state(root, ticket)
+        if saved_phase in ("blocked", "completed"):
+            ticket["phase"] = saved_phase
+        plan = ticket_dir(root, tid) / "plan.md"
+        content = plan.read_text(encoding="utf-8") if plan.exists() else ""
+        has_plan = bool(content.strip() and "No approved plan yet." not in content)
+        actions = recommend_next_steps(ticket, has_plan, getattr(args, "plan_finalized", False), standalone)
+        phase = f"{ticket['id']} · {ticket['phase']}" + (" · paused" if ticket.get("paused") else "")
+    else:
+        phase = "workspace overview (no ticket selected)"
+        prefix = "/cc-" if standalone else "/cc:"
+        actions = [{"text": "Select a ticket from workspace status", "slash": prefix + "status", "cli": "status"}]
+    out(f"Workflow: {phase}")
+    # Use the invoking engine, including a bundled engine in an older workspace.
+    engine = f"python3 {shlex.quote(str(Path(__file__).resolve()))} --workspace {shlex.quote(str(root))}"
+    for index, action in enumerate(actions[:config["max_suggestions"]]):
+        formats = ("slash", "cli") if config["display"] == "both" else (config["display"],)
+        available = [kind for kind in formats if action.get(kind)]
+        if not available:
+            available = [kind for kind in ("slash", "cli") if action.get(kind)]
+        commands = []
+        for kind in available:
+            label = "Claude Code" if kind == "slash" else "Terminal"
+            command = action[kind] if kind == "slash" else f"{engine} {action[kind]}"
+            commands.append(f"{label}: `{command}`")
+        out(f"{'Next' if index == 0 else 'Optional'}: {action['text']}. " + " | ".join(commands))
 
 
 def ticket_id(raw: str) -> str:
@@ -309,7 +477,17 @@ def workspace_skills():
             Read `context/communication/principles.md` then the relevant `slack.md`, `email.md`, or `stakeholder-updates.md`. If a ticket is named, use `cc resume <TICKET>` for verified facts. Check workspace people/business reference files only when relevant. Produce a draft; do not send messages automatically.
         """),
     }
-    return {name: body.replace("`cc ", "`python3 .cc/cc ") for name, body in skills.items()}
+    guidance = """
+
+At completion, run `cc next-steps <TICKET> --surface standalone` for the ticket
+involved, or omit <TICKET> when no ticket is selected. Display the returned
+Workflow/Next/Optional lines once, preserving command labels and configuration.
+If output is empty, omit guidance. Never invent or execute a suggested command.
+After native /plan is finalized in this conversation but not imported, add
+--plan-finalized to this read-only query; do not infer completion from files or
+approval dialogs. Without that signal, show the returned manual save fallback.
+"""
+    return {name: (body + guidance).replace("`cc ", "`python3 .cc/cc ") for name, body in skills.items()}
 
 
 def global_init_skill():
@@ -320,6 +498,7 @@ def global_init_skill():
         3. Execute `cc init . --name 'WORKSPACE NAME' --profile engineering` using the user's answers.
         4. Do not overwrite an existing workspace or install new external connectors.
         5. Tell the user to run `cc doctor` and `cc status`, and where to edit `context/`.
+        6. After successful initialization, run `cc next-steps --surface standalone` from the workspace and display its configured guidance once. Omit guidance if output is empty; never execute the suggestions.
     """, manual=True)
 
 
@@ -340,6 +519,7 @@ def create_workspace(args):
         "default_model": "sonnet",
     }
     json_write(root / "workspace.json", cfg)
+    atomic_write(root / "workspace.yaml", NEXT_STEPS_YAML)
     json_write(root / "config" / "integrations.json", {
         "atlassian": {"kind": "cli", "binary": "twg", "status": "unconfigured", "commands": {}},
         "aws": {"kind": "cli", "binary": "aws", "status": "unconfigured", "commands": {}},
@@ -371,7 +551,7 @@ You are a **coordinator**, not the repository coding session.
 - For writing, use communication profiles under `context/communication/` on demand.
 - Keep sensitive workspace data separate from other command centers; do not cross-read them.
 
-Supported starter commands: `pickup`, `status`, `resume`, `checkpoint`, `decision`, `approve`, `repo add`, `work`, and `sync` via `python3 .cc/cc`.
+Supported starter commands: `pickup`, `status`, `resume`, `checkpoint`, `decision`, `approve`, `repo add`, `work`, `sync`, and read-only `next-steps` via `python3 .cc/cc`. Guidance preferences live under `workflow.next_steps` in `workspace.yaml` or `workspace.json`; explicit JSON settings take precedence.
 """)
     files = {
         "context/identity.md": f"# {args.name}\n\nPurpose: {args.profile} workspace.\n\n## Principles\n- Keep facts distinct from assumptions.\n- Confirm before external actions.\n",
@@ -1096,6 +1276,12 @@ def build_parser():
     s.add_argument("ticket")
     s.set_defaults(func=resume_cmd)
 
+    s = sub.add_parser("next-steps", help="Display configured workflow guidance without changing or executing anything")
+    s.add_argument("ticket", nargs="?")
+    s.add_argument("--surface", choices=("plugin", "standalone"), default="plugin", help="Installed slash-command names (default: plugin)")
+    s.add_argument("--plan-finalized", action="store_true", help="Manual conversation hint: native plan finalized but not imported; does not record approval")
+    s.set_defaults(func=next_steps_cmd)
+
     s = sub.add_parser("phase", help="Set local phase (not Jira)")
     s.add_argument("ticket")
     s.add_argument("phase", choices=PHASES)
@@ -1188,6 +1374,14 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         args.func(args)
+        if args.command in ("pickup", "show", "resume", "phase", "decision", "plan", "approve", "checkpoint", "sync", "work"):
+            # Guidance must not turn a successful ticket operation into a
+            # reported failure, e.g. when optional workspace YAML is malformed.
+            try:
+                args.surface = "standalone"
+                next_steps_cmd(args)
+            except (SystemExit, OSError, UnicodeError):
+                print("Workflow guidance unavailable; check workspace.yaml and workspace.json.", file=sys.stderr)
     except (OSError, UnicodeError, subprocess.CalledProcessError) as exc:
         fail(str(exc))
 

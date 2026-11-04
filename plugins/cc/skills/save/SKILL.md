@@ -12,3 +12,14 @@ Ticket: $ARGUMENTS
 6. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" checkpoint <TICKET> --summary '...' --next '...'` (add `--pause` when stopping). Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" show <TICKET>` and read the persisted `plan.md` to verify full content, hash, and effective approval status. Report the exact saved path, phase, approval status, pause state and next action. Never claim success before verification.
 
 Use the bundled engine above even when this workspace has an older `.cc/cc` snapshot.
+
+At completion, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cc" next-steps <TICKET>`
+for the ticket involved, or omit <TICKET> when no ticket is selected. Display the
+returned Workflow/Next/Optional lines once, preserving command labels and
+configuration. If output is empty, omit guidance. Never invent or execute a
+suggested command. When presenting terminal commands, preserve the resolved
+absolute engine and workspace paths returned by the CLI.
+After native /plan is finalized in this conversation but not imported, add
+--plan-finalized to this read-only query. Do not infer native planning completion
+from files, timestamps or approval dialogs; otherwise show the returned manual
+save fallback. Do not add your own next-step commands outside this output.

@@ -1,5 +1,22 @@
 # Command Center Starter (v0.1)
 
+## Configurable next-step guidance
+
+`cc next-steps PAY-104` reads authoritative ticket state and effective approvals,
+then displays the phase and up to two actions by default. It does not write state
+or execute suggestions. `--surface standalone` uses `/cc-*` names instead of
+plugin `/cc:*` names. Without a ticket it provides workspace-level guidance.
+
+`cc next-steps PAY-104 --plan-finalized` is a manual hint that a native plan in the
+current conversation is finalized but not imported; it recommends saving the
+exact plan. It does not grant approval or persist the hint. Blockers, completed
+and paused states still take priority.
+
+Ticket commands also append guidance automatically. Skills query this command
+at completion and show the configured result once. Set `workflow.next_steps.enabled`
+to `false` in `workspace.yaml` or `workspace.json` to omit it. Explicit JSON values
+override YAML per setting. See [configuration and rules](NEXT-STEPS.md).
+
 A **local-first, dependency-free** starter for a reusable Claude Code command center. It keeps your original engineering use case at the center: Jira ticket → scope/plan → approved repo-specific implementation → tests/review → PR/merge/deployment through existing company tooling → verified Jira closure.
 
 The CLI and workspace templates are functional. **TWG and AWS integration commands are deliberately not guessed or automatically connected**; configure their approved operations later on the company machine. Context7 remains your existing Claude Code MCP server. This starter does *not* fetch real Jira tickets, open real PRs, send Slack messages, merge, or deploy.
