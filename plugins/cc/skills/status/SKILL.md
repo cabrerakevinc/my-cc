@@ -1,5 +1,5 @@
 ---
-name: cc-status
+name: status
 description: Summarize sprint tickets without loading all ticket histories
 ---
 

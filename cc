@@ -19,7 +19,7 @@ import tempfile
 import textwrap
 import uuid
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 PHASES = (
     "discovered", "investigating", "planning", "ready", "implementing",
     "testing", "in-review", "awaiting-deployment", "verifying", "completed", "blocked",

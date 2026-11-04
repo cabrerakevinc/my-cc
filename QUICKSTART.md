@@ -1,4 +1,4 @@
-# My CC v0.1.0 — Quick start (Mac)
+# My CC v0.1.1 — Quick start (Mac)
 
 ## Place the downloaded source in your preferred directory
 
@@ -7,7 +7,7 @@ The release ZIP contains a single `my-cc/` root. From Terminal on your Mac:
 ```bash
 mkdir -p /Users/kevincabrera/Code
 cd /Users/kevincabrera/Code
-unzip ~/Downloads/my-cc-v0.1.0-source.zip
+unzip ~/Downloads/my-cc-v0.1.1-source.zip
 cd /Users/kevincabrera/Code/my-cc
 ```
 
@@ -18,13 +18,13 @@ If `/Users/kevincabrera/Code/my-cc` already exists and has files, **do not extra
 ```bash
 python3 -m unittest discover -s tests -v
 python3 scripts/validate_package.py
-claude plugin validate ./plugins/my-cc
+claude plugin validate ./plugins/cc
 claude plugin validate .
 claude plugin marketplace add /Users/kevincabrera/Code/my-cc
-claude plugin install my-cc@my-cc-marketplace
+claude plugin install cc@my-cc-marketplace
 ```
 
-Start Claude Code inside a fresh command-center directory and use `/my-cc:cc-init`:
+Start Claude Code inside a fresh command-center directory and use `/cc:init`:
 
 ```bash
 mkdir -p ~/work/bbc/command-center

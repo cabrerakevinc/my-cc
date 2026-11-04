@@ -6,10 +6,10 @@
   },
   "plugins": [
     {
-      "name": "my-cc",
-      "source": "./plugins/my-cc",
+      "name": "cc",
+      "source": "./plugins/cc",
       "description": "Local-first Claude Code command centers: durable Jira ticket context, isolated coding sessions, and reusable workspace profiles.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }

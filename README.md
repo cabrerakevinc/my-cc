@@ -2,7 +2,7 @@
 
 **Engineering-first, local-first command centers for Claude Code.** Save Jira ticket plans and decisions, pause for days or weeks, resume from durable checkpoints, and launch coding sessions inside the correct repository/worktree so repository-specific instructions remain relevant.
 
-**Version:** `0.1.0` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
+**Version:** `0.1.1` (starter). **Maintainer:** [Kevin Cabrera](https://github.com/cabrerakevinc).
 
 > This project is an independent Claude Code plugin and local Python utility. It is not affiliated with Anthropic, Atlassian, or AWS.
 
@@ -12,17 +12,17 @@ In Claude Code, run:
 
 ```text
 /plugin marketplace add cabrerakevinc/my-cc
-/plugin install my-cc@my-cc-marketplace
+/plugin install cc@my-cc-marketplace
 ```
 
 The marketplace commands work **after** this repository has been pushed to GitHub. For local development before pushing:
 
 ```bash
 cd /Users/kevincabrera/Code/my-cc
-claude plugin validate ./plugins/my-cc
+claude plugin validate ./plugins/cc
 claude plugin validate .
 claude plugin marketplace add /Users/kevincabrera/Code/my-cc
-claude plugin install my-cc@my-cc-marketplace
+claude plugin install cc@my-cc-marketplace
 ```
 
 Then create and enter a fresh, empty workspace:
@@ -33,7 +33,7 @@ cd ~/work/bbc/command-center
 claude
 ```
 
-Inside Claude Code invoke **`/my-cc:cc-init`**. Plugin skills are namespaced, so the plugin's initializer is `/my-cc:cc-init`, not the built-in `/init` and not the global `/cc-init` from the optional legacy installer. It initializes a workspace with a local, self-contained CLI at `.cc/cc`.
+Inside Claude Code invoke **`/cc:init`**. Plugin skills are namespaced, so the plugin's initializer is `/cc:init`, not the built-in `/init` and not the global `/cc-init` from the optional legacy installer. It initializes a workspace with a local, self-contained CLI at `.cc/cc`.
 
 Outside Claude Code, use the generated CLI:
 
@@ -45,7 +45,11 @@ python3 .cc/cc checkpoint PAY-104 --summary 'Investigated' --next 'Plan and revi
 python3 .cc/cc resume PAY-104
 ```
 
-The independent workspace also has non-namespaced local `/cc-*` skills, plus the plugin's `/my-cc:cc-*` skills. You can continue using native Claude Code `/plan` and `/code-review` unchanged.
+Plugin commands are `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft`.
+
+To migrate an existing plugin installation, uninstall `my-cc@my-cc-marketplace`, update the marketplace, install `cc@my-cc-marketplace`, and restart Claude Code. Existing workspace files and ticket state remain usable.
+
+The independent workspace also has non-namespaced local `/cc-*` skills, plus the plugin's `/cc:*` skills. You can continue using native Claude Code `/plan` and `/code-review` unchanged.
 
 ## Work in a repository, not in the command center
 
@@ -73,20 +77,20 @@ Use the same plugin to create `~/work/bbc/command-center`, `~/work/bevz/command-
 - Python 3.10+ and Git required. Claude Code required for interactive coding; Python CLI uses standard library only.
 - Plugin installation does not modify user shell configuration. Optional `./install.sh` installs a global `cc` CLI and unprefixed global `/cc-init`, but is **not necessary** for the marketplace plugin.
 
-Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.1.0](docs/releases/v0.1.0.md).
+Full CLI walkthrough: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Quick start: [QUICKSTART.md](QUICKSTART.md). Release notes: [v0.1.1](docs/releases/v0.1.1.md).
 
 ## Development and validation
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 scripts/validate_package.py
-claude plugin validate ./plugins/my-cc  # requires Claude Code CLI
+claude plugin validate ./plugins/cc  # requires Claude Code CLI
 claude plugin validate .                 # requires Claude Code CLI
 ```
 
 ## Publishing
 
-Follow [docs/RELEASING.md](docs/RELEASING.md) to push to `git@github.com:cabrerakevinc/my-cc.git`, tag `v0.1.0`, and create a GitHub Release. A local tag or ZIP is **not** evidence of a published GitHub Release.
+Follow [docs/RELEASING.md](docs/RELEASING.md) to push to `git@github.com:cabrerakevinc/my-cc.git`, tag the next unpublished version, and create a GitHub Release. A local tag or ZIP is **not** evidence of a published GitHub Release.
 
 ## License
 

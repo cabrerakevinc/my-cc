@@ -1,5 +1,5 @@
 ---
-name: cc-work
+name: work
 description: Launch repo-specific Claude Code implementation worker
 disable-model-invocation: true
 ---

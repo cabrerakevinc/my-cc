@@ -1,5 +1,5 @@
 ---
-name: cc-init
+name: init
 description: Initialize a reusable My CC workspace in the current empty directory
 disable-model-invocation: true
 ---

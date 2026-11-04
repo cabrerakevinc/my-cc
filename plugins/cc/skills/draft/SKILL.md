@@ -1,5 +1,5 @@
 ---
-name: cc-draft
+name: draft
 description: Draft communication using workspace voice and task context
 ---
 

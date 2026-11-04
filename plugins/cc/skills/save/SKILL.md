@@ -1,5 +1,5 @@
 ---
-name: cc-save
+name: save
 description: Checkpoint ticket facts, decisions, and next action
 ---
 

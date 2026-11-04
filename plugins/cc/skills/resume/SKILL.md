@@ -1,5 +1,5 @@
 ---
-name: cc-resume
+name: resume
 description: Restore the latest checkpoint for one ticket only
 ---
 

@@ -167,3 +167,5 @@ python3 -m unittest discover -s tests -v
 ```
 
 To clean up: remove a workspace folder only after reviewing its state and backing up whatever your company permits. Remove the global skill at `~/.claude/skills/cc-init/` and the installed `cc` binary/symlink if desired. The installer does not install a background daemon.
+
+Marketplace plugin commands use `/cc:init`, `/cc:pickup`, `/cc:save`, `/cc:resume`, `/cc:status`, `/cc:work`, and `/cc:draft` after installing `cc@my-cc-marketplace`. The `/cc-*` examples above remain valid for standalone workspace skills.

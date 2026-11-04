@@ -2,7 +2,18 @@
 
 ## Versioning
 
-Use Semantic Versioning: Git tag `v0.1.0` corresponds to plugin manifest `version: 0.1.0` and the marketplace entry version. Do not reuse a published tag.
+Use Semantic Versioning: Git tag `v0.1.1` corresponds to plugin manifest `version: 0.1.1` and the marketplace entry version. Do not reuse a published tag.
+
+## Check publication first
+
+v0.1.0 was published on 2026-11-04. The namespace rename is prepared as v0.1.1; leave the existing v0.1.0 tag and release untouched. Before creating any new tag or release, check both:
+
+```bash
+git ls-remote --tags origin 'refs/tags/v0.1.1*'
+gh release view v0.1.1 --repo cabrerakevinc/my-cc
+```
+
+If either exists, inspect it and choose a new version rather than replacing it. Authentication or network errors do not establish that a release is absent.
 
 ## Preflight on your Mac
 
@@ -10,51 +21,48 @@ Use Semantic Versioning: Git tag `v0.1.0` corresponds to plugin manifest `versio
 cd /Users/kevincabrera/Code/my-cc
 python3 -m unittest discover -s tests -v
 python3 scripts/validate_package.py
-claude plugin validate ./plugins/my-cc
+claude plugin validate ./plugins/cc
 claude plugin validate .
 git status --short
 ```
 
 Review the files, especially scripts and any company-specific notes. No private workspace state should be included.
 
-## First publication to an empty GitHub repository
+## Commit and tag the reviewed changes
 
-**Only use this section if the remote really is empty and the folder is not already a git repo.**
+Use the existing repository and history. Review and stage only the intended release files, commit them, and push the release commit before tagging:
 
 ```bash
-cd /Users/kevincabrera/Code/my-cc
-git init -b main
-git remote add origin git@github.com:cabrerakevinc/my-cc.git
-git add .
+git diff --check
 git diff --cached --check
 git diff --cached --stat
-git commit -m "feat: initial My CC Claude Code marketplace release"
-git push -u origin main
-git tag -a v0.1.0 -m "My CC v0.1.0"
-git push origin v0.1.0
+git commit -m "feat: rename Claude Code plugin namespace to cc"
+git push origin HEAD
+git tag -a v0.1.1 -m "CC v0.1.1"
+git push origin v0.1.1
 ```
 
-If `.git` or `origin` already exists, inspect with `git status`, `git remote -v`, and `git log` first and use the existing history instead of reinitializing or force pushing. If the remote contains initial commits, clone/merge/reconcile it first. **Never force-push.**
+Never force-push or replace an existing published tag. Repeat the publication checks immediately before tagging.
 
 ## Create GitHub Release
 
 With GitHub CLI authenticated (`gh auth status`):
 
 ```bash
-gh release create v0.1.0 --repo cabrerakevinc/my-cc \
-  --title "My CC v0.1.0 — Initial Release" \
-  --notes-file docs/releases/v0.1.0.md
+gh release create v0.1.1 --repo cabrerakevinc/my-cc \
+  --title "CC v0.1.1 — Plugin namespace update" \
+  --notes-file docs/releases/v0.1.1.md
 ```
 
-Alternatively use GitHub web UI: Releases → Draft a new release → Select tag `v0.1.0` → paste `docs/releases/v0.1.0.md` → Publish release.
+Alternatively use GitHub web UI: Releases → Draft a new release → Select tag `v0.1.1` → paste `docs/releases/v0.1.1.md` → Publish release.
 
 ## Verify
 
 ```bash
-git ls-remote --tags origin v0.1.0
-gh release view v0.1.0 --repo cabrerakevinc/my-cc
+git ls-remote --tags origin v0.1.1
+gh release view v0.1.1 --repo cabrerakevinc/my-cc
 claude plugin marketplace add cabrerakevinc/my-cc
-claude plugin install my-cc@my-cc-marketplace
+claude plugin install cc@my-cc-marketplace
 ```
 
 This document is a publishing guide, **not evidence that the remote tag/release exists**.

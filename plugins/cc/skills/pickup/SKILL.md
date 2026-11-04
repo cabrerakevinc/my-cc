@@ -1,5 +1,5 @@
 ---
-name: cc-pickup
+name: pickup
 description: Start or investigate a ticket with local, persisted context
 ---
 

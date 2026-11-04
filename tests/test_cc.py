@@ -10,11 +10,31 @@ import unittest
 CLI = Path(__file__).resolve().parent.parent / "cc"
 
 
+class PluginPackagingTests(unittest.TestCase):
+    def test_plugin_namespace_and_bundled_engine(self):
+        root = CLI.parent
+        marketplace = json.loads((root / ".claude-plugin/marketplace.json").read_text())
+        entry = marketplace["plugins"][0]
+        self.assertEqual(entry["name"], "cc")
+        self.assertEqual(entry["source"], "./plugins/cc")
+        plugin = root / entry["source"]
+        manifest = json.loads((plugin / ".claude-plugin/plugin.json").read_text())
+        self.assertEqual(manifest["name"], "cc")
+        self.assertEqual(manifest["version"], entry["version"])
+        self.assertEqual((plugin / "scripts/cc").read_bytes(), CLI.read_bytes())
+        expected = {"init", "pickup", "save", "resume", "status", "work", "draft"}
+        self.assertEqual({p.name for p in (plugin / "skills").iterdir()}, expected)
+        for name in expected:
+            text = (plugin / "skills" / name / "SKILL.md").read_text()
+            self.assertTrue(text.startswith(f"---\nname: {name}\n"))
+        self.assertIn('${CLAUDE_PLUGIN_ROOT}/scripts/cc', (plugin / "skills/init/SKILL.md").read_text())
+
+
 class CommandCenterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.ws = self.root / "bbc" / "command-center"
         self.run_cc("init", str(self.ws), "--name", "BBC Engineering", "--profile", "engineering")
 
